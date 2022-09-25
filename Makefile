@@ -35,7 +35,7 @@ EXTRA_CFLAGS           = -lcapstone -fPIC -static-pie -fdata-sections -ffunction
 EXTRA_LDFLAGS          = 
 
 # Specify the include dirs, e.g. "-I/usr/include/mysql -I./include -I/usr/include -I/usr/local/include".
-INCLUDE                = 
+INCLUDE                = -I./include
 
 # The C Preprocessor options (notice here "CPP" does not mean "C++"; man cpp for more info.). Actually $(INCLUDE) is included. 
 CPPFLAGS               = -Wall -Wextra    # helpful for writing better code (behavior-related)
