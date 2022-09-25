@@ -68,13 +68,13 @@ pvector_t *pbvt_update(pvector_t *v, uint64_t idx, uint64_t val) {
 // Decrement reference count starting at root, free any nodes whose reference
 // count drops to 0.
 void pbvt_gc(pvector_t *v, uint64_t level) {
-  if (level == 0)
-    return;
-  for (int i = 0; i < NUM_CHILDREN; ++i) {
-    if (v->populated[i])
-      pbvt_gc(v->children[i], level - 1);
-  }
   v->refcount--;
+  if (level > 0) {
+    for (int i = 0; i < NUM_CHILDREN; ++i) {
+      if (v->populated[i])
+        pbvt_gc(v->children[i], level - 1);
+    }
+  }
   if (v->refcount == 0) {
     memset(v, 0xa5, sizeof(pvector_t));
     free(v);
@@ -87,6 +87,22 @@ void pbvt_print(char *name, pvector_t **vs, size_t n) {
     return;
   fprintf(f, "digraph {\n");
   fprintf(f, "\tnode[shape=record];\n");
+
+  fprintf(f, "\ttimeline [\n");
+  fprintf(f, "\t\tlabel = \"");
+  fprintf(f, "{<timeline>timeline|{");
+  for (size_t i = 0; i < n; ++i) {
+    fprintf(f, "<%ld>%p", i, vs[i]);
+    if (i != n - 1)
+      fprintf(f, "|");
+  }
+  fprintf(f, "}}");
+  fprintf(f, "\";\n");
+  fprintf(f, "\t];\n");
+
+  for (size_t i = 0; i < n; ++i) {
+    fprintf(f, "\ttimeline:%ld -> v%ld;\n", i, vs[i]->idx);
+  }
 
   for (size_t i = 0; i < n; ++i)
     pbvt_print_node(f, vs[i], MAX_DEPTH - 1);
