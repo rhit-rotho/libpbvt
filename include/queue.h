@@ -3,6 +3,8 @@
 
 #define INITIAL_CAPACITY (16);
 
+// A couple questions
+
 typedef struct queue
 {
     void **arr;
