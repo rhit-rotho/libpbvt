@@ -74,7 +74,11 @@ void pbvt_gc(PVector *v, uint64_t level) {
     free(v);
 }
 
+// FIXME: This is a bit silly, we could do better (probabilistically) with a
+// bloom filter, or actually using bitmap operations
+uint8_t *dirty;
 void pbvt_print(char *name, PVector **vs, size_t n) {
+  dirty = calloc(idx * sizeof(uint8_t), 1);
   FILE *f = fopen(name, "w");
   if (f == NULL)
     return;
@@ -102,9 +106,15 @@ void pbvt_print(char *name, PVector **vs, size_t n) {
 
   fprintf(f, "}\n");
   fclose(f);
+  free(dirty);
 }
 
 void pbvt_print_node(FILE *f, PVector *v, int level) {
+  int is_dirty = dirty[v->idx];
+  if (is_dirty)
+    return;
+  dirty[v->idx] = 1;
+
   fprintf(f, "\tv%ld [\n", v->idx);
   fprintf(f, "\t\tlabel = \"");
   fprintf(f, "{<head>%ld (%ld refs)|{", v->idx, v->refcount);
