@@ -5,31 +5,40 @@
 
 // TODO: We don't need all of malloc's functionality, a bump allocator would
 // probably work just fine (this may or may not be necessary for performance).
-// Additionally, pointers would no longer need to be 64-bit, since
+// Additionally, pointers would no longer need to be 64-bit, since we could just
+// use indices into buckets/arenas or a hash of the nodes contents
 
-#define BITS_PER_LEVEL (2)
+// These are precalculated, we need an extra 3 bits for the lowest level so we
+// don't waste space when storing individual bytes
+#define BITS_PER_LEVEL (1)
 #define NUM_CHILDREN (1 << BITS_PER_LEVEL)
 #define CHILD_MASK ((1 << BITS_PER_LEVEL) - 1)
-#define MAX_DEPTH (8 * sizeof(uintptr_t) / BITS_PER_LEVEL)
+// For 4-level paging (see "Paging" in Volume 3 of the Intel 64 and IA-32
+// Architectures Software Developer's manual)
+// #define MAX_DEPTH ((49 - (BITS_PER_LEVEL + 3)) / BITS_PER_LEVEL)
+#define MAX_DEPTH ((9 - (BITS_PER_LEVEL + 3)) / BITS_PER_LEVEL)
+#define BOTTOM_BITS (BITS_PER_LEVEL + 3)
+#define BOTTOM_MASK ((1 << BOTTOM_BITS) - 1)
 
-typedef struct pvector pvector_t;
+typedef struct PVector PVector;
 
-typedef struct pvector {
-  // TODO: Consider replacing this with a hash of node's contents
+typedef struct PVector {
   uint64_t idx;
   uint64_t refcount;
-  pvector_t *children[NUM_CHILDREN];
-  // TODO: Replace this with bitmap (8x space decrease)
-  uint8_t populated[NUM_CHILDREN];
-} pvector_t;
+  uint64_t hash;
+  union {
+    PVector *children[NUM_CHILDREN];
+    uint8_t bytes[NUM_CHILDREN * sizeof(PVector *)];
+  };
+} PVector;
 
 // public methods
-pvector_t *pbvt_create(void);
-uint64_t pbvt_get(pvector_t *v, uint64_t idx);
-pvector_t *pbvt_update(pvector_t *v, uint64_t idx, uint64_t val);
-void pbvt_print(char *name, pvector_t **vs, size_t n);
+PVector *pbvt_create(void);
+uint8_t pbvt_get(PVector *v, uint64_t idx);
+PVector *pbvt_update(PVector *v, uint64_t idx, uint64_t val);
+void pbvt_print(char *name, PVector **vs, size_t n);
 
 // private methods
-pvector_t *pbvt_clone(pvector_t *v, uint64_t level);
-void pbvt_gc(pvector_t *v, uint64_t level);
-void pbvt_print_node(FILE *f, pvector_t *v, int level);
+PVector *pbvt_clone(PVector *v, uint64_t level);
+void pbvt_gc(PVector *v, uint64_t level);
+void pbvt_print_node(FILE *f, PVector *v, int level);

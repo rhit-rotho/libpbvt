@@ -12,7 +12,7 @@ int main(int argc, char **argv) {
     queue_push(pvs, pbvt_update(queue_front(pvs), i, i));
   for (int i = 0; i < 15; ++i)
     pbvt_gc(queue_popleft(pvs), MAX_DEPTH - 1);
-  pbvt_print("out.dot", (pvector_t **)pvs->arr, pvs->pos);
+  pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
 
   for (;;) {
     char buf[0x100];
@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
     switch (buf[0]) {
     case 'a':
       pbuf += sscanf(pbuf, "%p %d", &idx, &val);
-      printf("Adding %d at %p\n", val, idx);
+      printf("Adding %d at 0x%0.16x\n", val, idx);
       queue_push(pvs, pbvt_update(queue_front(pvs), idx, val));
       break;
     case 'g':
@@ -41,7 +41,7 @@ int main(int argc, char **argv) {
       printf("Unrecognized %c\n", buf[0]);
       break;
     }
-    pbvt_print("out.dot", (pvector_t **)pvs->arr, pvs->pos);
+    pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
   }
 
   return 0;
