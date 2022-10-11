@@ -24,6 +24,7 @@ PVector *pbvt_clone(PVector *v, uint64_t level) {
     if (level > 1 && u->children[i])
       u->children[i]->refcount++;
   }
+  u->hash = v->hash;
   return u;
 }
 
@@ -85,17 +86,18 @@ PVector *pbvt_update(PVector *v, uint64_t idx, uint64_t val) {
 // bit, may also consider changing the API to pbvt_gc(PVector**vs, size_t n),
 // since we can coalesce compaction.
 void pbvt_gc(PVector *v, uint64_t level) {
-  if (level > 0)
+  v->refcount--;
+  if (v->refcount == 0 && level > 0) {
     for (int i = 0; i < NUM_CHILDREN; ++i)
       if (v->children[i])
         pbvt_gc(v->children[i], level - 1);
-  v->refcount--;
+  }
   if (v->refcount == 0)
     free(v);
 }
 
 // FIXME: This is a bit silly, we could do better (probabilistically) with a
-// bloom filter, or actually using bitmap operations
+// bloom filter, or by actually using bitmap operations
 uint8_t *dirty;
 void pbvt_print(char *name, PVector **vs, size_t n) {
   dirty = calloc(idx * sizeof(uint8_t), 1);
