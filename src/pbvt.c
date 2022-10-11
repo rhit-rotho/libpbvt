@@ -1,4 +1,5 @@
 #include "pbvt.h"
+#include "fasthash.h"
 
 // TODO: For a multi-threaded implementation a global counter is killer,
 // consider indexing nodes by contents (e.g. xxHash) rather than by the order
@@ -46,6 +47,8 @@ PVector *pbvt_update(PVector *v, uint64_t idx, uint64_t val) {
   //   if (pbvt_get(v, idx) == val)
   //     return v;
 
+  PVector *trace[MAX_DEPTH] = {0};
+
   uint64_t key;
   PVector *u = pbvt_clone(v, MAX_DEPTH - 1);
   v = u;
@@ -55,15 +58,32 @@ PVector *pbvt_update(PVector *v, uint64_t idx, uint64_t val) {
       v->children[key] = pbvt_create();
     v->children[key]->refcount--;
     v->children[key] = pbvt_clone(v->children[key], i);
+    trace[i] = v;
     v = v->children[key];
   }
   key = idx & BOTTOM_MASK;
   v->bytes[key] = val;
+  v->hash = fasthash64(v->bytes, sizeof(v->bytes), 0);
+
+  // Propogate hashes back up the tree
+  for (int i = 1; i < MAX_DEPTH; ++i) {
+    v = trace[i];
+    uint64_t hashes[NUM_CHILDREN];
+    for (int j = 0; j < NUM_CHILDREN; ++j)
+      if (v->children[j])
+        hashes[j] = v->children[j]->hash;
+      else
+        hashes[j] = 0; // Hash of empty node
+    v->hash = fasthash64(hashes, sizeof(hashes), 0);
+  }
+
   return u;
 }
 
 // Decrement reference count starting at root, free any nodes whose reference
-// count drops to 0.
+// count drops to 0. With a custom memory allocator, this can be the expensive
+// bit, may also consider changing the API to pbvt_gc(PVector**vs, size_t n),
+// since we can coalesce compaction.
 void pbvt_gc(PVector *v, uint64_t level) {
   if (level > 0)
     for (int i = 0; i < NUM_CHILDREN; ++i)
@@ -117,7 +137,7 @@ void pbvt_print_node(FILE *f, PVector *v, int level) {
 
   fprintf(f, "\tv%ld [\n", v->idx);
   fprintf(f, "\t\tlabel = \"");
-  fprintf(f, "{<head>%ld (%ld refs)|{", v->idx, v->refcount);
+  fprintf(f, "{<head>%ld (%ld refs) h: %.16lx|{", v->idx, v->refcount, v->hash);
   if (level > 0) {
     for (int i = 0; i < NUM_CHILDREN; ++i) {
       if (v->children[i])
