@@ -16,14 +16,14 @@
 // For 4-level paging (see "Paging" in Volume 3 of the Intel 64 and IA-32
 // Architectures Software Developer's manual)
 // #define MAX_DEPTH ((49 - (BITS_PER_LEVEL + 3)) / BITS_PER_LEVEL)
-#define MAX_DEPTH ((9 - (BITS_PER_LEVEL + 3)) / BITS_PER_LEVEL)
+// #define MAX_DEPTH ((9 - (BITS_PER_LEVEL + 3)) / BITS_PER_LEVEL)
+#define MAX_DEPTH ((24 - (BITS_PER_LEVEL + 3)) / BITS_PER_LEVEL)
 #define BOTTOM_BITS (BITS_PER_LEVEL + 3)
 #define BOTTOM_MASK ((1 << BOTTOM_BITS) - 1)
 
 typedef struct PVector PVector;
 
 typedef struct PVector {
-  uint64_t idx;
   uint64_t refcount;
   uint64_t hash;
   union {

@@ -5,32 +5,27 @@
 #define likely(x) (__builtin_expect((x), 1))
 #define unlikely(x) (__builtin_expect((x), 0))
 
-// TODO: For a multi-threaded implementation a global counter is killer,
-// consider indexing nodes by contents (e.g. xxHash) rather than by the order
-// in which they were created. This also simplifies memory allocation, which can
-// be O(1) with a hash table.
-
 HashTable *ht = NULL;
-uint64_t idx = 0;
 PVector *pbvt_create() {
   PVector *v = calloc(sizeof(PVector), 1);
-  v->idx = idx++;
-  v->refcount = 0;
+  v->refcount = 1;
   if (unlikely(!ht)) {
     ht = ht_create();
     ht_insert(ht, 0UL, v);
   }
   return v;
 }
+
 // We can do this without cloning all the child nodes because our tree is
 // persistent; all operations on the data structure will clone any children as
 // necessary, so we can be lazy here.
 PVector *pbvt_clone(PVector *v, uint64_t level) {
   PVector *u = pbvt_create();
+  u->refcount=0;
   for (int i = 0; i < NUM_CHILDREN; ++i) {
     u->children[i] = v->children[i];
-    if (level > 0 && v->children[i]) {
-      PVector *c = ht_get(ht, v->children[i]);
+    if (level > 0) {
+      PVector *c = ht_get(ht, u->children[i]);
       c->refcount++;
     }
   }
@@ -56,8 +51,6 @@ PVector *pbvt_update(PVector *v, uint64_t idx, uint8_t val) {
   PVector *path[MAX_DEPTH] = {0};
   uint64_t key;
   uint64_t hash;
-
-  PVector *orig = v;
 
   // build path down into tree
   for (int i = MAX_DEPTH - 1; i >= 1; --i) {
@@ -91,10 +84,8 @@ PVector *pbvt_update(PVector *v, uint64_t idx, uint8_t val) {
       v = ht_get(ht, hash);
     } else {
       v = pbvt_clone(v, i);
-
-      ((PVector *)ht_get(ht, v->children[key]))->refcount--;
+      // ((PVector *)ht_get(ht, v->children[key]))->refcount--;
       path[i - 1]->refcount++;
-
       v->children[key] = path[i - 1]->hash;
       v->hash = hash;
       ht_insert(ht, hash, v);
@@ -102,6 +93,7 @@ PVector *pbvt_update(PVector *v, uint64_t idx, uint8_t val) {
     path[i] = v;
   }
 
+  // We always do this since our caller now has a reference to the new root node
   path[MAX_DEPTH - 1]->refcount++;
   return path[MAX_DEPTH - 1];
 }
@@ -111,7 +103,7 @@ PVector *pbvt_update(PVector *v, uint64_t idx, uint8_t val) {
 // bit, may also consider changing the API to pbvt_gc(PVector**vs, size_t n),
 // since we can coalesce compaction.
 void pbvt_gc(PVector *v, uint64_t level) {
-  if (v->hash == 0)
+  if (v->hash == 0) // don't free NULL node
     return;
 
   v->refcount--;
@@ -122,15 +114,26 @@ void pbvt_gc(PVector *v, uint64_t level) {
   }
   if (v->refcount == 0) {
     ht_remove(ht, v->hash);
+    // if (v == 0x603000027d30) {
+    //   printf("\n");
+    //   printf("%.16lx %d\n", v->hash, level);
+    //   for (int i = 0; i < NUM_CHILDREN * sizeof(PVector *); ++i)
+    //     printf("%c", v->bytes[i]);
+    //   printf("\n");
+    //   printf("%p\n", v);
+    //   exit(-1);
+    // }
     free(v);
   }
 }
 
 // FIXME: This is a bit silly, we could do better (probabilistically) with a
 // bloom filter, or by actually using bitmap operations
+uint64_t dirty_sz;
 uint8_t *dirty;
 void pbvt_print(char *name, PVector **vs, size_t n) {
-  dirty = calloc(idx * sizeof(uint8_t), 1);
+  dirty_sz = 0x10000;
+  dirty = calloc(dirty_sz, 1);
   FILE *f = fopen(name, "w");
   if (f == NULL)
     return;
@@ -141,7 +144,7 @@ void pbvt_print(char *name, PVector **vs, size_t n) {
   fprintf(f, "\t\tlabel = \"");
   fprintf(f, "{<timeline>timeline|{");
   for (size_t i = 0; i < n; ++i) {
-    fprintf(f, "<%ld>%p", i, vs[i]);
+    fprintf(f, "<%ld>%.16lx", i, vs[i]->hash);
     if (i != n - 1)
       fprintf(f, "|");
   }
@@ -150,7 +153,7 @@ void pbvt_print(char *name, PVector **vs, size_t n) {
   fprintf(f, "\t];\n");
 
   for (size_t i = 0; i < n; ++i) {
-    fprintf(f, "\ttimeline:%ld -> v%ld;\n", i, vs[i]->idx);
+    fprintf(f, "\ttimeline:%ld -> v%.16lx;\n", i, vs[i]->hash);
   }
 
   for (size_t i = 0; i < n; ++i)
@@ -162,18 +165,18 @@ void pbvt_print(char *name, PVector **vs, size_t n) {
 }
 
 void pbvt_print_node(FILE *f, PVector *v, int level) {
-  int is_dirty = dirty[v->idx];
+  int is_dirty = dirty[v->hash % dirty_sz];
   if (is_dirty)
     return;
-  dirty[v->idx] = 1;
+  dirty[v->hash % dirty_sz] = 1;
 
-  fprintf(f, "\tv%ld [\n", v->idx);
+  fprintf(f, "\tv%.16lx [\n", v->hash);
   fprintf(f, "\t\tlabel = \"");
-  fprintf(f, "{<head>%ld (%ld refs) h: %.16lx|{", v->idx, v->refcount, v->hash);
+  fprintf(f, "{<head>%.16lx (%ld refs)|{", v->hash, v->refcount);
   if (level > 0) {
     for (int i = 0; i < NUM_CHILDREN; ++i) {
       if (v->children[i])
-        fprintf(f, "<%d>%p", i, (PVector *)ht_get(ht, v->children[i]));
+        fprintf(f, "<%d>%.16lx", i, v->children[i]);
       else
         fprintf(f, "<%d>x", i);
       if (i != NUM_CHILDREN - 1)
@@ -196,8 +199,7 @@ void pbvt_print_node(FILE *f, PVector *v, int level) {
 
   for (int i = 0; i < NUM_CHILDREN; ++i) {
     if (v->children[i]) {
-      fprintf(f, "\tv%ld:%d -> v%ld;\n", v->idx, i,
-              ((PVector *)ht_get(ht, v->children[i]))->idx);
+      fprintf(f, "\tv%.16lx:%d -> v%.16lx;\n", v->hash, i, v->children[i]);
       pbvt_print_node(f, ht_get(ht, v->children[i]), level - 1);
     }
   }

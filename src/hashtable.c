@@ -23,7 +23,9 @@ void *ht_get(HashTable *ht, uint64_t key) {
 
 // Assumes caller does not try to insert duplicates
 int ht_insert(HashTable *ht, uint64_t key, void *val) {
-  assert(!ht_get(ht, key));
+  // assert(!ht_get(ht, key));
+  if (ht_get(ht, key))
+    return 0;
 
   // rekey and free
   if (ht->size == ht->cap * HT_LOADING_FACTOR) {
@@ -78,6 +80,8 @@ void *ht_remove(HashTable *ht, uint64_t key) {
       // loading factor.
       for (size_t j = i; j < bucket.size - 1; ++j)
         bucket.entries[j] = bucket.entries[j + 1];
+      bucket.size--;
+      ht->size--;
       return val;
     }
   return NULL;
