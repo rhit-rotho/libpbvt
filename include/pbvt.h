@@ -27,7 +27,7 @@ typedef struct PVector {
   uint64_t refcount;
   uint64_t hash;
   union {
-    PVector *children[NUM_CHILDREN];
+    uint64_t children[NUM_CHILDREN];
     uint8_t bytes[NUM_CHILDREN * sizeof(PVector *)];
   };
 } PVector;
@@ -35,7 +35,7 @@ typedef struct PVector {
 // public methods
 PVector *pbvt_create(void);
 uint8_t pbvt_get(PVector *v, uint64_t idx);
-PVector *pbvt_update(PVector *v, uint64_t idx, uint64_t val);
+PVector *pbvt_update(PVector *v, uint64_t idx, uint8_t val);
 void pbvt_print(char *name, PVector **vs, size_t n);
 
 // private methods

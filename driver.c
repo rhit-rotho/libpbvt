@@ -8,9 +8,9 @@ int main(int argc, char **argv) {
   Queue *pvs = queue_create();
   queue_push(pvs, pbvt_create());
 
-  for (int i = 0; i < 16; ++i)
+  for (int i = 0; i < 16; ++i) 
     queue_push(pvs, pbvt_update(queue_front(pvs), i, i));
-  for (int i = 0; i < 15; ++i)
+  for (int i = 0; i < 16; ++i)
     pbvt_gc(queue_popleft(pvs), MAX_DEPTH - 1);
   pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
 

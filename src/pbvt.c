@@ -1,19 +1,27 @@
 #include "pbvt.h"
 #include "fasthash.h"
+#include "hashtable.h"
+
+#define likely(x) (__builtin_expect((x), 1))
+#define unlikely(x) (__builtin_expect((x), 0))
 
 // TODO: For a multi-threaded implementation a global counter is killer,
 // consider indexing nodes by contents (e.g. xxHash) rather than by the order
 // in which they were created. This also simplifies memory allocation, which can
 // be O(1) with a hash table.
+
+HashTable *ht = NULL;
 uint64_t idx = 0;
 PVector *pbvt_create() {
   PVector *v = calloc(sizeof(PVector), 1);
   v->idx = idx++;
-  v->refcount = 1;
-  v->hash = 0UL;
+  v->refcount = 0;
+  if (unlikely(!ht)) {
+    ht = ht_create();
+    ht_insert(ht, 0UL, v);
+  }
   return v;
 }
-
 // We can do this without cloning all the child nodes because our tree is
 // persistent; all operations on the data structure will clone any children as
 // necessary, so we can be lazy here.
@@ -21,10 +29,11 @@ PVector *pbvt_clone(PVector *v, uint64_t level) {
   PVector *u = pbvt_create();
   for (int i = 0; i < NUM_CHILDREN; ++i) {
     u->children[i] = v->children[i];
-    if (level > 1 && u->children[i])
-      u->children[i]->refcount++;
+    if (level > 0 && v->children[i]) {
+      PVector *c = ht_get(ht, v->children[i]);
+      c->refcount++;
+    }
   }
-  u->hash = v->hash;
   return u;
 }
 
@@ -37,48 +46,64 @@ uint8_t pbvt_get(PVector *v, uint64_t idx) {
     key = (idx >> (i * BITS_PER_LEVEL + 3)) & CHILD_MASK;
     if (!v->children[key])
       return -1;
-    v = v->children[key];
+    v = ht_get(ht, v->children[key]);
   }
   key = idx & BOTTOM_MASK;
   return v->bytes[key];
 }
 
-PVector *pbvt_update(PVector *v, uint64_t idx, uint64_t val) {
-  // TODO: Test this as an optimization
-  //   if (pbvt_get(v, idx) == val)
-  //     return v;
-
-  PVector *trace[MAX_DEPTH] = {0};
-
+PVector *pbvt_update(PVector *v, uint64_t idx, uint8_t val) {
+  PVector *path[MAX_DEPTH] = {0};
   uint64_t key;
-  PVector *u = pbvt_clone(v, MAX_DEPTH - 1);
-  v = u;
+  uint64_t hash;
+
+  PVector *orig = v;
+
+  // build path down into tree
   for (int i = MAX_DEPTH - 1; i >= 1; --i) {
+    path[i] = v;
     key = (idx >> (i * BITS_PER_LEVEL + 3)) & CHILD_MASK;
-    if (!v->children[key])
-      v->children[key] = pbvt_create();
-    v->children[key]->refcount--;
-    v->children[key] = pbvt_clone(v->children[key], i);
-    trace[i] = v;
-    v = v->children[key];
+    v = ht_get(ht, v->children[key]);
   }
-  key = idx & BOTTOM_MASK;
-  v->bytes[key] = val;
-  v->hash = fasthash64(v->bytes, sizeof(v->bytes), 0);
+
+  uint8_t content[sizeof(v->bytes)];
+  memcpy(content, v->bytes, sizeof(content));
+  content[idx & BOTTOM_MASK] = val;
+  hash = fasthash64(content, sizeof(content), 0);
+  if (ht_get(ht, hash)) {
+    v = ht_get(ht, hash);
+  } else {
+    v = pbvt_clone(v, 0);
+    v->bytes[idx & BOTTOM_MASK] = val;
+    v->hash = hash;
+    ht_insert(ht, hash, v);
+  }
+  path[0] = v;
 
   // Propogate hashes back up the tree
   for (int i = 1; i < MAX_DEPTH; ++i) {
-    v = trace[i];
-    uint64_t hashes[NUM_CHILDREN];
-    for (int j = 0; j < NUM_CHILDREN; ++j)
-      if (v->children[j])
-        hashes[j] = v->children[j]->hash;
-      else
-        hashes[j] = 0; // Hash of empty node
-    v->hash = fasthash64(hashes, sizeof(hashes), 0);
+    v = path[i];
+    key = (idx >> (i * BITS_PER_LEVEL + 3)) & CHILD_MASK;
+    memcpy(content, v->children, sizeof(content));
+    ((uint64_t *)content)[key] = path[i - 1]->hash;
+    hash = fasthash64(content, sizeof(content), 0);
+    if (ht_get(ht, hash)) {
+      v = ht_get(ht, hash);
+    } else {
+      v = pbvt_clone(v, i);
+
+      ((PVector *)ht_get(ht, v->children[key]))->refcount--;
+      path[i - 1]->refcount++;
+
+      v->children[key] = path[i - 1]->hash;
+      v->hash = hash;
+      ht_insert(ht, hash, v);
+    }
+    path[i] = v;
   }
 
-  return u;
+  path[MAX_DEPTH - 1]->refcount++;
+  return path[MAX_DEPTH - 1];
 }
 
 // Decrement reference count starting at root, free any nodes whose reference
@@ -86,14 +111,19 @@ PVector *pbvt_update(PVector *v, uint64_t idx, uint64_t val) {
 // bit, may also consider changing the API to pbvt_gc(PVector**vs, size_t n),
 // since we can coalesce compaction.
 void pbvt_gc(PVector *v, uint64_t level) {
+  if (v->hash == 0)
+    return;
+
   v->refcount--;
   if (v->refcount == 0 && level > 0) {
     for (int i = 0; i < NUM_CHILDREN; ++i)
       if (v->children[i])
-        pbvt_gc(v->children[i], level - 1);
+        pbvt_gc(ht_get(ht, v->children[i]), level - 1);
   }
-  if (v->refcount == 0)
+  if (v->refcount == 0) {
+    ht_remove(ht, v->hash);
     free(v);
+  }
 }
 
 // FIXME: This is a bit silly, we could do better (probabilistically) with a
@@ -143,7 +173,7 @@ void pbvt_print_node(FILE *f, PVector *v, int level) {
   if (level > 0) {
     for (int i = 0; i < NUM_CHILDREN; ++i) {
       if (v->children[i])
-        fprintf(f, "<%d>%p", i, v->children[i]);
+        fprintf(f, "<%d>%p", i, (PVector *)ht_get(ht, v->children[i]));
       else
         fprintf(f, "<%d>x", i);
       if (i != NUM_CHILDREN - 1)
@@ -166,8 +196,9 @@ void pbvt_print_node(FILE *f, PVector *v, int level) {
 
   for (int i = 0; i < NUM_CHILDREN; ++i) {
     if (v->children[i]) {
-      fprintf(f, "\tv%ld:%d -> v%ld;\n", v->idx, i, v->children[i]->idx);
-      pbvt_print_node(f, v->children[i], level - 1);
+      fprintf(f, "\tv%ld:%d -> v%ld;\n", v->idx, i,
+              ((PVector *)ht_get(ht, v->children[i]))->idx);
+      pbvt_print_node(f, ht_get(ht, v->children[i]), level - 1);
     }
   }
 }
