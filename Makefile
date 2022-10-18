@@ -29,7 +29,7 @@ PROGRAM                = libpbvt.so
 #CC                    = $(CXX)
 
 # The extra pre-processor and compiler options; applies to both C and C++ compiling as well as LD. 
-EXTRA_CFLAGS           = -ggdb -fPIC -static-pie -fdata-sections -ffunction-sections
+EXTRA_CFLAGS           = -ggdb -fPIC -static-pie -fdata-sections -ffunction-sections -fsanitize=address
 
 # The extra linker options, e.g. "-lmysqlclient -lz"
 EXTRA_LDFLAGS          = 
@@ -89,8 +89,8 @@ HDREXTS = .h .H .hh .hpp .HPP .h++ .hxx .hp
 
 # The pre-processor and compiler options.
 # Users can override those variables from the command line.
-CFLAGS  = -O2
-CXXFLAGS= -O2
+CFLAGS  = -O0
+CXXFLAGS= -O0
 
 # The command used to delete file.
 RM     = rm -f
