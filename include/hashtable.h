@@ -7,7 +7,7 @@
 
 #define HT_BUCKET_CAP (2)
 #define HT_INITIAL_CAP (16)
-#define HT_LOADING_FACTOR (2)
+#define HT_LOADING_FACTOR (4)
 
 typedef struct HashEntry {
   uint64_t key;

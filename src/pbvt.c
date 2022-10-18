@@ -21,7 +21,7 @@ PVector *pbvt_create() {
 // necessary, so we can be lazy here.
 PVector *pbvt_clone(PVector *v, uint64_t level) {
   PVector *u = pbvt_create();
-  u->refcount=0;
+  u->refcount = 0;
   for (int i = 0; i < NUM_CHILDREN; ++i) {
     u->children[i] = v->children[i];
     if (level > 0) {

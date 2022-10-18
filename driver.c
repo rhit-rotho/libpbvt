@@ -25,15 +25,13 @@ int main(int argc, char **argv) {
         pbvt_gc(queue_popleft(pvs), MAX_DEPTH - 1);
         COZ_PROGRESS;
       }
-      pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
-      COZ_PROGRESS;
     }
+    pbvt_get(queue_front(pvs), rand() & 0xff);
+    COZ_PROGRESS;
     if (i == 10000000)
       break;
-    //   pbvt_stats(pvs);
   }
   pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
-  COZ_PROGRESS;
   return 0;
 
   // insert characters from sample.txt
