@@ -2,26 +2,21 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
-// Basic implementation of hash table with chaining
+// Basic implementation of hash table with quadratic probing
 
-#define HT_BUCKET_CAP (2)
 #define HT_INITIAL_CAP (16)
-#define HT_LOADING_FACTOR (2)
+#define HT_LOADING_FACTOR (0.8)
+#define HT_TOMBSTONE (0xffffffffffffffff)
 
 typedef struct HashEntry {
   uint64_t key;
   void *value;
 } HashEntry;
 
-typedef struct HashBucket {
-  HashEntry *entries;
-  size_t cap;
-  size_t size;
-} HashBucket;
-
 typedef struct HashTable {
-  HashBucket *buckets;
+  HashEntry *arr;
   size_t cap; // power of 2, number of buckets
   size_t size;
 } HashTable;
