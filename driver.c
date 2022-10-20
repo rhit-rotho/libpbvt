@@ -7,7 +7,7 @@
 #include <unistd.h>
 
 #define MIN(a, b) ((a) > (b) ? (b) : (a))
-#define GC_THRESHOLD (0x100)
+#define GC_THRESHOLD (0x40000)
 
 int main(int argc, char **argv) {
   if (argc < 2) {
@@ -19,7 +19,8 @@ int main(int argc, char **argv) {
 
   Queue *pvs = queue_create();
   queue_push(pvs, pbvt_create());
-
+  uint8_t t = 0;
+random_insert:
   srand(0);
   for (int64_t i = 1; i < trials; ++i) {
     uint64_t key = rand() & 0xff;
@@ -27,23 +28,23 @@ int main(int argc, char **argv) {
     queue_push(pvs, pbvt_update(queue_front(pvs), key, val));
     COZ_PROGRESS;
     if (i % GC_THRESHOLD == 0) {
-      for (int j = 0; j < GC_THRESHOLD - 1; ++j) {
+      while (pvs->pos > GC_THRESHOLD / 2) {
         pbvt_gc(queue_popleft(pvs), MAX_DEPTH - 1);
         COZ_PROGRESS;
       }
     }
+    // if (i % 0x20000 == 0)
+    //   pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
     for (int i = 0; i < 100; ++i) {
-      pbvt_get(queue_front(pvs), rand() & 0xff);
+      t ^= pbvt_get(queue_front(pvs), rand() & 0xff);
       COZ_PROGRESS;
     }
   }
-  pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
-  while (pvs->pos > 0)
-    pbvt_gc(queue_popleft(pvs), MAX_DEPTH - 1);
-  queue_free(pvs);
-  pbvt_cleanup();
+  printf("%.2x\n", t);
   return 0;
+  goto cleanup;
 
+insert_sample:
   // insert characters from sample.txt
   int fd = open("sample.txt", O_RDONLY);
   size_t pos = 0;
@@ -56,18 +57,19 @@ int main(int argc, char **argv) {
       break;
     printf("%c", c);
     queue_push(pvs, pbvt_update(queue_front(pvs), pos, c));
-    pos++;
-    if (pos % GC_THRESHOLD == 0) {
-      for (int j = 0; j < GC_THRESHOLD; ++j)
+    if (pvs->pos > GC_THRESHOLD) {
+      while (pvs->pos > GC_THRESHOLD / 2)
         pbvt_gc(queue_popleft(pvs), MAX_DEPTH - 1);
-      pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
     }
-    // if (pos > 0x1000)
-    // break;
+    if (pos % 0x8000 == 0)
+      pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
+    pos++;
   }
   pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
   close(fd);
+  goto cleanup;
 
+driver:
   int auto_update = 1;
   for (;;) {
     char buf[0x100];
@@ -106,7 +108,7 @@ int main(int argc, char **argv) {
     case 'f':
       pbuf += sscanf(pbuf, "%p", &idx);
       val = pbvt_get(queue_front(pvs), idx);
-      printf("Value at %p: %ld\n", idx, val);
+      printf("Value at %.16lx: %.2x\n", idx, val);
       break;
     default:
       printf("Unrecognized %c\n", buf[0]);
@@ -115,5 +117,10 @@ int main(int argc, char **argv) {
     pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
   }
 
+cleanup:
+  while (pvs->pos > 0)
+    pbvt_gc(queue_popleft(pvs), MAX_DEPTH - 1);
+  queue_free(pvs);
+  pbvt_cleanup();
   return 0;
 }
