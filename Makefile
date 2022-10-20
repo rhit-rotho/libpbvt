@@ -29,7 +29,7 @@ PROGRAM                = libpbvt.so
 #CC                    = $(CXX)
 
 # The extra pre-processor and compiler options; applies to both C and C++ compiling as well as LD. 
-EXTRA_CFLAGS           = -g -gdwarf-3 -fPIC -static-pie -fdata-sections -ffunction-sections #-fsanitize=address
+EXTRA_CFLAGS           = -fPIC -static-pie -fdata-sections -ffunction-sections -g -gdwarf-3 #-fsanitize=address
 
 # The extra linker options, e.g. "-lmysqlclient -lz"
 EXTRA_LDFLAGS          = 

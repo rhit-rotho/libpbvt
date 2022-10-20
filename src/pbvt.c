@@ -24,7 +24,7 @@ PVector *pbvt_clone(PVector *v, uint64_t level) {
   u->refcount = 0;
   for (int i = 0; i < NUM_CHILDREN; ++i) {
     u->children[i] = v->children[i];
-    if (level > 0) {
+    if (level > 0 && u->children[i]) {
       PVector *c = ht_get(ht, u->children[i]);
       c->refcount++;
     }
@@ -48,6 +48,8 @@ uint8_t pbvt_get(PVector *v, uint64_t idx) {
 }
 
 PVector *pbvt_update(PVector *v, uint64_t idx, uint8_t val) {
+  assert(idx < 1 << NUM_BITS);
+
   PVector *path[MAX_DEPTH] = {0};
   uint64_t key;
   uint64_t hash;

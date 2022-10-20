@@ -14,10 +14,10 @@ HashTable *ht_create(void) {
 }
 
 void *ht_get(HashTable *ht, uint64_t key) {
-  HashBucket bucket = ht->buckets[key & (ht->cap - 1)];
-  for (size_t i = 0; i < bucket.size; ++i)
-    if (bucket.entries[i].key == key)
-      return bucket.entries[i].value;
+  HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
+  for (size_t i = 0; i < bucket->size; ++i)
+    if (bucket->entries[i].key == key)
+      return bucket->entries[i].value;
   return NULL;
 }
 
@@ -56,28 +56,31 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
   }
 
   HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
-  if (bucket->size == bucket->cap) {
+  if (bucket->size + 1 == bucket->cap) {
     bucket->cap *= 2;
     bucket->entries = realloc(bucket->entries, sizeof(HashEntry) * bucket->cap);
   }
 
   HashEntry be = {key, val};
-  bucket->entries[bucket->size++] = be;
+  bucket->entries[bucket->size] = be;
+  bucket->size++;
   ht->size++;
 
   return 0;
 }
 
 void *ht_remove(HashTable *ht, uint64_t key) {
-  HashBucket bucket = ht->buckets[key & (ht->cap - 1)];
-  for (size_t i = 0; i < bucket.size; ++i)
-    if (bucket.entries[i].key == key) {
-      void *val = bucket.entries[i].value;
+  HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
+  for (size_t i = 0; i < bucket->size; ++i)
+    if (bucket->entries[i].key == key) {
+      void *val = bucket->entries[i].value;
       // Shift all elements back one. This should be fast because of our low
       // loading factor.
-      for (size_t j = i; j < bucket.size - 1; ++j)
-        bucket.entries[j] = bucket.entries[j + 1];
-      bucket.size--;
+      for (size_t j = i; j < bucket->size - 1; ++j)
+        bucket->entries[j] = bucket->entries[j + 1];
+      // memmove(&bucket->entries[i], &bucket->entries[i + 1],
+      //         sizeof(HashEntry) * (bucket->size - i));
+      bucket->size--;
       ht->size--;
       return val;
     }

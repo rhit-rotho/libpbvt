@@ -18,7 +18,9 @@ void queue_push(Queue *q, void *v) {
 
 void *queue_popleft(Queue *q) {
   void *v = q->arr[0];
-  memmove(&q->arr[0], &q->arr[1], sizeof(void *) * (q->pos - 1));
+  for (uint64_t i = 0; i < q->pos - 1; ++i)
+    q->arr[i] = q->arr[i + 1];
+  // memmove(&q->arr[0], &q->arr[1], sizeof(void *) * (q->pos - 1));
   q->pos--;
   return v;
 }
