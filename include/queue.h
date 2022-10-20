@@ -1,10 +1,11 @@
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define INITIAL_CAPACITY (16);
 
 typedef struct Queue {
-  void** arr;
+  void **arr;
   uint64_t capacity;
   uint64_t pos;
 } Queue;

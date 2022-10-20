@@ -14,7 +14,7 @@ HashTable *ht_create(void) {
 }
 
 void *ht_get(HashTable *ht, uint64_t key) {
-  HashBucket bucket = ht->buckets[key % ht->cap];
+  HashBucket bucket = ht->buckets[key & (ht->cap - 1)];
   for (size_t i = 0; i < bucket.size; ++i)
     if (bucket.entries[i].key == key)
       return bucket.entries[i].value;
@@ -56,7 +56,7 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
     ht->cap = hn->cap;
   }
 
-  HashBucket *bucket = &ht->buckets[key % ht->cap];
+  HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
   if (bucket->size == bucket->cap) {
     bucket->cap *= 2;
     bucket->entries = realloc(bucket->entries, sizeof(HashEntry) * bucket->cap);
@@ -70,9 +70,7 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
 }
 
 void *ht_remove(HashTable *ht, uint64_t key) {
-  uint64_t pos = key % ht->cap;
-  HashBucket bucket = ht->buckets[pos];
-
+  HashBucket bucket = ht->buckets[(ht->cap - 1)];
   for (size_t i = 0; i < bucket.size; ++i)
     if (bucket.entries[i].key == key) {
       void *val = bucket.entries[i].value;
