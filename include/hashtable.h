@@ -31,3 +31,5 @@ HashTable *ht_create(void);
 int ht_insert(HashTable *ht, uint64_t key, void *val);
 void *ht_get(HashTable *ht, uint64_t key);
 void *ht_remove(HashTable *ht, uint64_t key);
+void ht_free(HashTable *ht);
+

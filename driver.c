@@ -10,12 +10,18 @@
 #define GC_THRESHOLD (0x100)
 
 int main(int argc, char **argv) {
+  if (argc < 2) {
+    printf("./driver [TRIALS]\n");
+    return 1;
+  }
+
+  int64_t trials = atoll(argv[1]);
+
   Queue *pvs = queue_create();
   queue_push(pvs, pbvt_create());
 
   srand(0);
-  size_t i = 1;
-  while (i++) {
+  for (int64_t i = 1; i < trials; ++i) {
     uint64_t key = rand() & 0xff;
     uint8_t val = rand() & 0xff;
     queue_push(pvs, pbvt_update(queue_front(pvs), key, val));
@@ -26,12 +32,15 @@ int main(int argc, char **argv) {
         COZ_PROGRESS;
       }
     }
-    pbvt_get(queue_front(pvs), rand() & 0xff);
-    COZ_PROGRESS;
-    if (i == 10000000)
-      break;
+    for (int i = 0; i < 100; ++i) {
+      pbvt_get(queue_front(pvs), rand() & 0xff);
+      COZ_PROGRESS;
+    }
   }
   pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
+  for (int i = 0; i < pvs->pos; ++i)
+    pbvt_gc(queue_popleft(pvs), MAX_DEPTH - 1);
+  queue_free(pvs);
   return 0;
 
   // insert characters from sample.txt
