@@ -81,12 +81,13 @@ PVector *pbvt_update(PVector *v, uint64_t idx, uint8_t val) {
     ((uint64_t *)content)[key] = path[i - 1]->hash;
     hash = fasthash64(content, sizeof(content), 0);
     if (ht_get(ht, hash)) {
+      // Hash didn't change, so we don't need to change the refcount
       v = ht_get(ht, hash);
     } else {
       v = pbvt_clone(v, i);
-      // ((PVector *)ht_get(ht, v->children[key]))->refcount--;
-      path[i - 1]->refcount++;
+      ((PVector *)ht_get(ht, v->children[key]))->refcount--;
       v->children[key] = path[i - 1]->hash;
+      path[i - 1]->refcount++;
       v->hash = hash;
       ht_insert(ht, hash, v);
     }
@@ -114,15 +115,6 @@ void pbvt_gc(PVector *v, uint64_t level) {
   }
   if (v->refcount == 0) {
     ht_remove(ht, v->hash);
-    // if (v == 0x603000027d30) {
-    //   printf("\n");
-    //   printf("%.16lx %d\n", v->hash, level);
-    //   for (int i = 0; i < NUM_CHILDREN * sizeof(PVector *); ++i)
-    //     printf("%c", v->bytes[i]);
-    //   printf("\n");
-    //   printf("%p\n", v);
-    //   exit(-1);
-    // }
     free(v);
   }
 }
@@ -203,4 +195,9 @@ void pbvt_print_node(FILE *f, PVector *v, int level) {
       pbvt_print_node(f, ht_get(ht, v->children[i]), level - 1);
     }
   }
+}
+
+void pbvt_cleanup(void) {
+  free(ht_get(ht, 0));
+  ht_free(ht);
 }

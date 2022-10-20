@@ -23,9 +23,7 @@ void *ht_get(HashTable *ht, uint64_t key) {
 
 // Assumes caller does not try to insert duplicates
 int ht_insert(HashTable *ht, uint64_t key, void *val) {
-  // assert(!ht_get(ht, key));
-  if (ht_get(ht, key))
-    return 0;
+  assert(!ht_get(ht, key));
 
   // rekey and free
   if (ht->size == ht->cap * HT_LOADING_FACTOR) {
@@ -43,12 +41,13 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
 
     // reinsert
     for (size_t i = 0; i < ht->cap; ++i) {
-      for (size_t j = 0; j < ht->buckets[i].size; ++j) {
-        HashEntry he = ht->buckets[i].entries[j];
+      HashBucket *bucket = &ht->buckets[i];
+      for (size_t j = 0; j < bucket->size; ++j) {
+        HashEntry he = bucket->entries[j];
         // WARNING: Recursive call, make sure this doesn't reshuffle
         ht_insert(hn, he.key, he.value);
       }
-      free(ht->buckets[i].entries);
+      free(bucket->entries);
     }
     free(ht->buckets);
     ht->buckets = hn->buckets;
@@ -70,11 +69,11 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
 }
 
 void *ht_remove(HashTable *ht, uint64_t key) {
-  HashBucket bucket = ht->buckets[(ht->cap - 1)];
+  HashBucket bucket = ht->buckets[key & (ht->cap - 1)];
   for (size_t i = 0; i < bucket.size; ++i)
     if (bucket.entries[i].key == key) {
       void *val = bucket.entries[i].value;
-      // Shuffle all elements back one. This should be find because of our low
+      // Shift all elements back one. This should be fast because of our low
       // loading factor.
       for (size_t j = i; j < bucket.size - 1; ++j)
         bucket.entries[j] = bucket.entries[j + 1];
@@ -86,7 +85,7 @@ void *ht_remove(HashTable *ht, uint64_t key) {
 }
 
 void ht_free(HashTable *ht) {
-  for (size_t i = 0; i < ht->size; ++i)
+  for (size_t i = 0; i < ht->cap; ++i)
     free(ht->buckets[i].entries);
   free(ht->buckets);
   free(ht);

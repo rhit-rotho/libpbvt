@@ -38,9 +38,10 @@ int main(int argc, char **argv) {
     }
   }
   pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
-  for (int i = 0; i < pvs->pos; ++i)
+  while (pvs->pos > 0)
     pbvt_gc(queue_popleft(pvs), MAX_DEPTH - 1);
   queue_free(pvs);
+  pbvt_cleanup();
   return 0;
 
   // insert characters from sample.txt
