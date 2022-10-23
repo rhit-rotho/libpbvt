@@ -61,44 +61,54 @@ PVector *pbvt_update(PVector *v, uint64_t idx, uint8_t val) {
     v = ht_get(ht, v->children[key]);
   }
 
+  uint8_t dirty = 0;
   uint8_t content[sizeof(v->bytes)];
   memcpy(content, v->bytes, sizeof(content));
   content[idx & BOTTOM_MASK] = val;
   hash = fasthash64(content, sizeof(content), 0);
   if (ht_get(ht, hash)) {
     v = ht_get(ht, hash);
+    dirty = 0;
   } else {
     v = pbvt_clone(v, 0);
     v->bytes[idx & BOTTOM_MASK] = val;
     v->hash = hash;
     ht_insert(ht, hash, v);
+    dirty = 1;
   }
-  path[0] = v;
+  PVector *prev = v;
 
   // Propogate hashes back up the tree
   for (int i = 1; i < MAX_DEPTH; ++i) {
     v = path[i];
     key = (idx >> (i * BITS_PER_LEVEL + 3)) & CHILD_MASK;
-    memcpy(content, v->children, sizeof(content));
-    ((uint64_t *)content)[key] = path[i - 1]->hash;
-    hash = fasthash64(content, sizeof(content), 0);
+    if (dirty) {
+      memcpy(content, v->children, sizeof(content));
+      ((uint64_t *)content)[key] = prev->hash;
+      hash = fasthash64(content, sizeof(content), 0);
+    } else {
+      hash = v->hash;
+    }
+
     if (ht_get(ht, hash)) {
       // Hash didn't change, so we don't need to change the refcount
       v = ht_get(ht, hash);
+      dirty = 0;
     } else {
       v = pbvt_clone(v, i);
       ((PVector *)ht_get(ht, v->children[key]))->refcount--;
-      v->children[key] = path[i - 1]->hash;
-      path[i - 1]->refcount++;
+      v->children[key] = prev->hash;
+      prev->refcount++;
       v->hash = hash;
       ht_insert(ht, hash, v);
+      dirty = 1;
     }
-    path[i] = v;
+    prev = v;
   }
 
   // We always do this since our caller now has a reference to the new root node
-  path[MAX_DEPTH - 1]->refcount++;
-  return path[MAX_DEPTH - 1];
+  v->refcount++;
+  return v;
 }
 
 // Decrement reference count starting at root, free any nodes whose reference

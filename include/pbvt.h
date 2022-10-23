@@ -44,3 +44,4 @@ PVector *pbvt_clone(PVector *v, uint64_t level);
 void pbvt_gc(PVector *v, uint64_t level);
 void pbvt_print_node(FILE *f, PVector *v, int level);
 void pbvt_cleanup(void);
+void pbvt_stats(void);
