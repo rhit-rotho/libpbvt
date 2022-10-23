@@ -4,9 +4,9 @@
 #include "queue.h"
 
 Queue *queue_create(void) {
-  Queue *q = calloc(sizeof(Queue), 1);
+  Queue *q = calloc(1, sizeof(Queue));
   q->capacity = INITIAL_CAPACITY;
-  q->arr = calloc(sizeof(void *) * q->capacity, 1);
+  q->arr = calloc(q->capacity, sizeof(void *));
   q->head = 0;
   q->tail = 0;
   return q;
@@ -41,6 +41,12 @@ void *queue_popleft(Queue *q) {
 void *queue_front(Queue *q) {
   assert(queue_size(q) > 0);
   return q->arr[(q->capacity + q->tail - 1) & (q->capacity - 1)];
+}
+
+// What would be the result of doing popleft n times
+void *queue_peek(Queue *q, uint64_t n) {
+  assert(n < queue_size(q));
+  return q->arr[(q->head + n) & (q->capacity - 1)];
 }
 
 void queue_free(Queue *q) {

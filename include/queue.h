@@ -18,3 +18,4 @@ void *queue_front(Queue *q);
 void *queue_popleft(Queue *q);
 void queue_free(Queue *q);
 uint64_t queue_size(Queue *q);
+void *queue_peek(Queue *q, uint64_t n);

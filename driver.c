@@ -1,41 +1,53 @@
 #include "pbvt.h"
 
+#include <assert.h>
 #include <coz.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
 
 #define MIN(a, b) ((a) > (b) ? (b) : (a))
-#define GC_THRESHOLD (24)
-
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    printf("./driver [TRIALS]\n");
+  if (argc < 3) {
+    printf("./driver [TRIALS] [GC_THRESHOLD]\n");
     return 1;
   }
 
   int64_t trials = atoll(argv[1]);
+  int64_t gc_threshold = atoll(argv[2]);
+  if (gc_threshold == -1)
+    gc_threshold = INT64_MAX;
 
   PVectorState *pvs = pbvt_init();
+  uint8_t *tarr = calloc((1UL << NUM_BITS), sizeof(uint8_t));
+  uint8_t t0 = 0;
+  uint8_t t1 = 0;
 
-  uint8_t t = 0;
+  goto insert_sample;
+
 random_insert:
   srand(0);
   for (int64_t i = 1; i < trials; ++i) {
     uint64_t key = rand() & 0xff;
     uint8_t val = rand() & 0xff;
-    pbvt_update_latest(pvs, key, val);
+    pbvt_update_latest(pvs, key, pbvt_get_latest(pvs, key) ^ val);
+    tarr[key] ^= val;
     COZ_PROGRESS;
-    if (i % GC_THRESHOLD == 0) {
-      pbvt_gc_n(pvs, GC_THRESHOLD / 2);
+    if (pbvt_size(pvs) > gc_threshold) {
+      pbvt_gc_n(pvs, gc_threshold / 2);
       COZ_PROGRESS;
     }
     for (int i = 0; i < 100; ++i) {
-      t ^= pbvt_get_latest(pvs, rand() & 0xff);
+      uint64_t gkey = rand() & 0xff;
+      t0 ^= pbvt_get_latest(pvs, gkey);
+      t1 ^= tarr[gkey];
+      assert(tarr[gkey] == pbvt_get_latest(pvs, gkey));
       COZ_PROGRESS;
     }
   }
-  printf("%.2x\n", t);
+  printf("%.2x == %.2x? %s\n", t0, t1, t0 == t1 ? "true" : "false");
+  assert(t0 == t1);
+  free(tarr);
   goto cleanup;
 
 insert_sample:
@@ -49,17 +61,14 @@ insert_sample:
       perror("read");
     if (nbytes == 0)
       break;
-    printf("%c", c);
+    // printf("%c", c);
     pbvt_update_latest(pvs, pos, c);
-    // if (queue_size(pvs) > GC_THRESHOLD) {
-    //   while (queue_size(pvs) > GC_THRESHOLD / 2)
-    //     pbvt_gc(queue_popleft(pvs), MAX_DEPTH - 1);
-    // }
-    // if (pos % 0x8000 == 0)
-    //   pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
+    if (pbvt_size(pvs) > gc_threshold) {
+      pbvt_gc_n(pvs, gc_threshold / 2);
+      COZ_PROGRESS;
+    }
     pos++;
   }
-  // pbvt_print("out.dot", (PVector **)pvs->arr, queue_size(pvs));
   close(fd);
   goto cleanup;
 
@@ -111,6 +120,8 @@ insert_sample:
   //   }
 
 cleanup:
+  pbvt_print(pvs, "out.dot");
+  pbvt_stats(pvs);
   pbvt_cleanup(pvs);
 
   return 0;

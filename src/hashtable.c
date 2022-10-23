@@ -7,11 +7,11 @@ HashTable *ht_create(void) {
   HashTable *ht = malloc(sizeof(HashTable));
   ht->cap = HT_INITIAL_CAP;
   ht->size = 0;
-  ht->buckets = calloc(sizeof(HashBucket) * ht->cap, 1);
+  ht->buckets = calloc(ht->cap, sizeof(HashBucket));
   for (size_t i = 0; i < ht->cap; ++i) {
     ht->buckets[i].size = 0;
     ht->buckets[i].cap = HT_BUCKET_CAP;
-    ht->buckets[i].entries = calloc(sizeof(HashEntry) * ht->buckets[i].cap, 1);
+    ht->buckets[i].entries = calloc(ht->buckets[i].cap, sizeof(HashEntry));
   }
   return ht;
 }
@@ -34,12 +34,11 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
     HashTable *hn = &hnt;
     hn->size = 0;
     hn->cap = ht->cap * 2;
-    hn->buckets = calloc(sizeof(HashBucket) * hn->cap, 1);
+    hn->buckets = calloc(hn->cap, sizeof(HashBucket));
     for (size_t i = 0; i < hn->cap; ++i) {
       hn->buckets[i].size = 0;
       hn->buckets[i].cap = HT_BUCKET_CAP;
-      hn->buckets[i].entries =
-          calloc(sizeof(HashEntry) * hn->buckets[i].cap, 1);
+      hn->buckets[i].entries = calloc(hn->buckets[i].cap, sizeof(HashEntry));
     }
 
     // reinsert
@@ -96,3 +95,5 @@ void ht_free(HashTable *ht) {
   free(ht->buckets);
   free(ht);
 }
+
+size_t ht_size(HashTable *ht) { return ht->size; }

@@ -7,3 +7,4 @@ RUN apt install -y build-essential cmake docutils-common git python3 pkg-config 
 RUN git clone https://github.com/antoyo/libelfin && cd libelfin && make && make install && cd ..
 RUN git clone https://github.com/plasma-umass/coz && cd coz && cmake . && make && make install && cd ..
 RUN ldconfig
+RUN apt install -y strace

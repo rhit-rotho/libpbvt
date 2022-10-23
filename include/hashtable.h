@@ -4,7 +4,7 @@
 // Basic implementation of hash table with bucketing
 
 #define HT_INITIAL_CAP (16)
-#define HT_LOADING_FACTOR (4)
+#define HT_LOADING_FACTOR (2)
 #define HT_BUCKET_CAP HT_LOADING_FACTOR
 
 typedef struct HashEntry {
@@ -30,3 +30,4 @@ int ht_insert(HashTable *ht, uint64_t key, void *val);
 void *ht_get(HashTable *ht, uint64_t key);
 void *ht_remove(HashTable *ht, uint64_t key);
 void ht_free(HashTable *ht);
+size_t ht_size(HashTable *ht);
