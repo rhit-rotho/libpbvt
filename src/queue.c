@@ -1,34 +1,45 @@
 #include "queue.h"
+#include <assert.h>
+#include <string.h>
 
 Queue *queue_create(void) {
   Queue *q = calloc(sizeof(Queue), 1);
   q->capacity = INITIAL_CAPACITY;
   q->arr = calloc(sizeof(void *) * q->capacity, 1);
-  q->pos = 0;
+  q->head = 0;
+  q->tail = 0;
   return q;
 }
 
+uint64_t queue_size(Queue *q) {
+  return (q->tail + q->capacity - q->head) & (q->capacity - 1);
+}
+
 void queue_push(Queue *q, void *v) {
-  if (q->pos + 1 == q->capacity) {
+  if (queue_size(q) + 1 == q->capacity) {
+    q->arr = realloc(q->arr, sizeof(void *) * q->capacity * 2);
+    if (q->head > q->tail) {
+      uint64_t remaining = q->capacity - q->head;
+      memmove(&q->arr[2 * q->capacity - remaining], &q->arr[q->head],
+              sizeof(void *) * remaining);
+      q->head = 2 * q->capacity - remaining;
+    }
     q->capacity *= 2;
-    q->arr = realloc(q->arr, sizeof(void *) * q->capacity);
   }
-  q->arr[q->pos++] = v;
+  q->arr[q->tail] = v;
+  q->tail = (q->tail + 1) & (q->capacity - 1);
 }
 
 void *queue_popleft(Queue *q) {
-  void *v = q->arr[0];
-  for (uint64_t i = 0; i < q->pos - 1; ++i)
-    q->arr[i] = q->arr[i + 1];
-  // memmove(&q->arr[0], &q->arr[1], sizeof(void *) * (q->pos - 1));
-  q->pos--;
+  assert(queue_size(q) > 0);
+  void *v = q->arr[q->head];
+  q->head = (q->head + 1) & (q->capacity - 1);
   return v;
 }
 
 void *queue_front(Queue *q) {
-  if (q->pos == 0)
-    return NULL;
-  return q->arr[q->pos - 1];
+  assert(queue_size(q) > 0);
+  return q->arr[(q->capacity + q->tail - 1) & (q->capacity - 1)];
 }
 
 void queue_free(Queue *q) {
