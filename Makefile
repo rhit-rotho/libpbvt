@@ -29,19 +29,19 @@ PROGRAM                = libpbvt.so
 #CC                    = $(CXX)
 
 # The extra pre-processor and compiler options; applies to both C and C++ compiling as well as LD. 
-EXTRA_CFLAGS           = -fPIC -static-pie -fdata-sections -ffunction-sections -g -gdwarf-3 #-fsanitize=address
+EXTRA_CFLAGS           = -fPIC -fdata-sections -ffunction-sections
 
 # The extra linker options, e.g. "-lmysqlclient -lz"
 EXTRA_LDFLAGS          = 
 
 # Specify the include dirs, e.g. "-I/usr/include/mysql -I./include -I/usr/include -I/usr/local/include".
-INCLUDE                = -I./include
+INCLUDE                = -Iinclude
 
 # The C Preprocessor options (notice here "CPP" does not mean "C++"; man cpp for more info.). Actually $(INCLUDE) is included. 
 CPPFLAGS               = -Wall -Wextra    # helpful for writing better code (behavior-related)
 
 # The options used in linking as well as in any direct use of ld. 
-LDFLAGS                = -shared
+LDFLAGS                = -shared -Wl,--export-dynamic
 
 # The directories in which source files reside.
 # If not specified, all subdirectories of the current directory will be added recursively. 
@@ -208,4 +208,4 @@ $(PROGRAM):$(OBJS)
 all: $(PROGRAM)
 
 clean:
-	$(RM) $(OBJS) $(PROGRAM) $(PROGRAM).exe
+	$(RM) $(OBJS) $(PROGRAM)

@@ -1,3 +1,6 @@
+#include <assert.h>
+#include <stdlib.h>
+
 #include "hashtable.h"
 
 HashTable *ht_create(void) {

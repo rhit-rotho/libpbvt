@@ -1,7 +1,5 @@
-#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 
 // Basic implementation of hash table with bucketing
 

@@ -1,6 +1,7 @@
-#include "queue.h"
 #include <assert.h>
 #include <string.h>
+
+#include "queue.h"
 
 Queue *queue_create(void) {
   Queue *q = calloc(sizeof(Queue), 1);
