@@ -1,11 +1,13 @@
 #include "pbvt.h"
 
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
 PVectorState *pbvt_init(void) {
   PVectorState *pvs = calloc(1, sizeof(PVectorState));
   pvs->q = queue_create();
 
   // create null node
-  PVector *v = calloc(1, sizeof(PVector));
+  PVector *v = calloc(1, MAX(sizeof(PVector), sizeof(PVectorLeaf)));
   v->hash = 0UL;
 
   queue_push(pvs->q, v);
@@ -15,11 +17,11 @@ PVectorState *pbvt_init(void) {
   return pvs;
 }
 
-uint8_t pbvt_get_latest(PVectorState *pvs, uint64_t key) {
+uint8_t pbvt_get_head(PVectorState *pvs, uint64_t key) {
   return pvector_get(queue_front(pvs->q), key);
 }
 
-void pbvt_update_latest(PVectorState *pvs, uint64_t key, uint8_t val) {
+void pbvt_update_head(PVectorState *pvs, uint64_t key, uint8_t val) {
   queue_push(pvs->q, pvector_update(queue_front(pvs->q), key, val));
 }
 
@@ -27,6 +29,8 @@ void pbvt_cleanup(PVectorState *pvs) {
   while (queue_size(pvs->q) > 0)
     pvector_gc(queue_popleft(pvs->q), MAX_DEPTH - 1);
   queue_free(pvs->q);
+  free(((PVectorLeaf *)ht_get(ht, 0UL))->bytes);
+  free(ht_get(ht, 0UL));
   ht_free(ht);
   free(pvs);
 }
@@ -80,18 +84,18 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
   fprintf(f, "\t\tlabel = \"");
   fprintf(f, "{<head>%.16lx (%ld refs)|{", v->hash, v->refcount);
   if (level > 0) {
-    for (int i = 0; i < NUM_CHILDREN; ++i) {
+    for (size_t i = 0; i < NUM_CHILDREN; ++i) {
       if (v->children[i])
-        fprintf(f, "<%d>%.16lx", i, v->children[i]);
+        fprintf(f, "<%ld>%.16lx", i, v->children[i]);
       else
-        fprintf(f, "<%d>x", i);
+        fprintf(f, "<%ld>x", i);
       if (i != NUM_CHILDREN - 1)
         fprintf(f, "|");
     }
   } else {
-    for (int i = 0; i < 8 * NUM_CHILDREN; ++i) {
-      fprintf(f, "<%d>%.2x", i, v->bytes[i]);
-      if (i != 8 * NUM_CHILDREN - 1)
+    for (size_t i = 0; i < NUM_BOTTOM; ++i) {
+      fprintf(f, "<%ld>%.2x", i, ((PVectorLeaf *)v)->bytes[i]);
+      if (i != NUM_BOTTOM - 1)
         fprintf(f, "|");
     }
   }
@@ -103,9 +107,9 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
   if (level == 0)
     return;
 
-  for (int i = 0; i < NUM_CHILDREN; ++i) {
+  for (size_t i = 0; i < NUM_CHILDREN; ++i) {
     if (v->children[i]) {
-      fprintf(f, "\tv%.16lx:%d -> v%.16lx;\n", v->hash, i, v->children[i]);
+      fprintf(f, "\tv%.16lx:%ld -> v%.16lx;\n", v->hash, i, v->children[i]);
       pbvt_print_node(f, pr, ht_get(ht, v->children[i]), level - 1);
     }
   }
@@ -114,13 +118,28 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
 #include "fasthash.h"
 #include <assert.h>
 #include <malloc.h>
+
+void pbvt_test(void) {
+  printf("NUM_BITS       = %d\n", NUM_BITS);
+  printf("MAX_INDEX      = %ld\n", MAX_INDEX);
+  printf("NUM_CHILDREN   = %ld\n", NUM_CHILDREN);
+  printf("BOTTOM_BITS    = %d\n", BOTTOM_BITS);
+  printf("MAX_DEPTH      = %d\n", MAX_DEPTH);
+  printf("\n");
+  printf("NUM_BOTTOM     = %ld\n", NUM_BOTTOM);
+  printf("BITS_PER_LEVEL = %d\n", BITS_PER_LEVEL);
+  printf("BOTTOM_MASK    = %ld\n", BOTTOM_MASK);
+  printf("CHILD_MASK     = %ld\n", CHILD_MASK);
+}
+
 void pbvt_stats(PVectorState *pvs) {
+
   printf("Tracked states: %ld\n", queue_size(pvs->q));
   printf("Number of nodes: %ld\n", ht_size(ht));
-  printf("Theoretical max: 0x%lx\n", 1UL << NUM_BITS);
-  printf("Sparsity: %f\n", 100.0 * (float)ht_size(ht) /
-                               (float)(queue_size(pvs->q) * (1UL << NUM_BITS)));
-  malloc_stats();
+  printf("Theoretical max: 0x%lx\n", MAX_INDEX);
+  printf("Sparsity: %f%%\n",
+         100.0 * (float)ht_size(ht) / (float)(queue_size(pvs->q) * MAX_INDEX));
+  // malloc_stats();
 
   // check hash
   for (size_t i = 0; i < ht->cap; ++i) {
@@ -133,14 +152,11 @@ void pbvt_stats(PVectorState *pvs) {
       if (v->hash == 0UL)
         continue;
 
-      // for (int i = 0, n = sizeof(v->bytes); i < n; ++i)
-      //   printf("%.2x ", v->bytes[i]);
-      // printf("\n");
-      assert(fasthash64(v->bytes, sizeof(v->bytes), 0) == v->hash);
+      // assert(fasthash64(v->bytes, sizeof(v->bytes), 0) == v->hash);
     }
   }
 
-  PVector *pv = NULL;
+  PVectorLeaf *pv = NULL;
   uint64_t refs = 0;
 
   for (size_t i = 0; i < ht->cap; ++i) {
@@ -151,7 +167,7 @@ void pbvt_stats(PVectorState *pvs) {
       if (v->hash == 0UL)
         continue;
       if (v->level == 0 && v->refcount > refs) {
-        pv = v;
+        pv = (PVectorLeaf *)v;
         refs = pv->refcount;
       }
     }
@@ -173,9 +189,13 @@ void pbvt_stats(PVectorState *pvs) {
 
   printf("node %.16lx (level: %ld) with %ld refs:\n", pv->hash, pv->level,
          pv->refcount);
-  printf("b\"");
-  for (int i = 0, n = sizeof(pv->bytes); i < n; ++i)
-    // printf("%.2x ", pv->bytes[i]);
+
+  // for (int i = 0, n = NUM_BOTTOM; i < n; ++i)
+  //   printf("%.2x ", pv->bytes[i]);
+  // printf("\n");
+
+  printf("\"");
+  for (int i = 0, n = NUM_BOTTOM; i < n; ++i)
     printf("%s", chars[pv->bytes[i]]);
   printf("\"\n");
 }

@@ -18,19 +18,22 @@ int main(int argc, char **argv) {
   if (gc_threshold == -1)
     gc_threshold = INT64_MAX;
 
+  pbvt_test();
   PVectorState *pvs = pbvt_init();
-  uint8_t *tarr = calloc((1UL << NUM_BITS), sizeof(uint8_t));
+
+  // goto insert_sample;
+  goto random_insert;
+
+random_insert:
+  uint8_t *tarr = calloc(MAX_INDEX + 1, sizeof(uint8_t));
   uint8_t t0 = 0;
   uint8_t t1 = 0;
 
-  goto insert_sample;
-
-random_insert:
   srand(0);
   for (int64_t i = 1; i < trials; ++i) {
-    uint64_t key = rand() & 0xff;
-    uint8_t val = rand() & 0xff;
-    pbvt_update_latest(pvs, key, pbvt_get_latest(pvs, key) ^ val);
+    uint64_t key = rand() & MAX_INDEX;
+    uint8_t val = rand() & MAX_INDEX;
+    pbvt_update_head(pvs, key, pbvt_get_head(pvs, key) ^ val);
     tarr[key] ^= val;
     COZ_PROGRESS;
     if (pbvt_size(pvs) > gc_threshold) {
@@ -38,10 +41,12 @@ random_insert:
       COZ_PROGRESS;
     }
     for (int i = 0; i < 100; ++i) {
-      uint64_t gkey = rand() & 0xff;
-      t0 ^= pbvt_get_latest(pvs, gkey);
+      uint64_t gkey = rand() & MAX_INDEX;
+      t0 ^= pbvt_get_head(pvs, gkey);
       t1 ^= tarr[gkey];
-      assert(tarr[gkey] == pbvt_get_latest(pvs, gkey));
+      if (tarr[gkey] != pbvt_get_head(pvs, gkey))
+        printf("%d: %d %d\n", gkey, tarr[gkey], pbvt_get_head(pvs, gkey));
+      assert(tarr[gkey] == pbvt_get_head(pvs, gkey));
       COZ_PROGRESS;
     }
   }
@@ -62,7 +67,7 @@ insert_sample:
     if (nbytes == 0)
       break;
     // printf("%c", c);
-    pbvt_update_latest(pvs, pos, c);
+    pbvt_update_head(pvs, pos, c);
     if (pbvt_size(pvs) > gc_threshold) {
       pbvt_gc_n(pvs, gc_threshold / 2);
       COZ_PROGRESS;
@@ -109,7 +114,7 @@ insert_sample:
   //       break;
   //     case 'f':
   //       pbuf += sscanf(pbuf, "%p", &idx);
-  //       val = pbvt_get_latest(idx);
+  //       val = pbvt_get_head(idx);
   //       printf("Value at %.16lx: %.2x\n", idx, val);
   //       break;
   //     default:
