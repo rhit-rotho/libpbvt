@@ -4,18 +4,18 @@
 
 // TODO: We don't need all of malloc's functionality, a bump allocator would
 // probably work just fine (this may or may not be necessary for performance).
-// Additionally, pointers would no longer need to be 64-bit, since we could just
-// use indices into buckets/arenas or a hash of the nodes contents
 
 // For 4-level paging (see "Paging" in Volume 3 of the Intel 64 and IA-32
 // Architectures Software Developer's manual)
-// #define NUM_BITS (49)
-// #define NUM_BITS (24)
-#define NUM_BITS (25)
-#define BITS_PER_LEVEL (4)
-#define BOTTOM_BITS (1)
+#define NUM_BITS (49)
+#define BITS_PER_LEVEL (2)
+#define BOTTOM_BITS (5)
 
-// Calculated defines, make sure NUM_BITS % (NUM_BITS - BOTTOM_BITS) == 0
+// Calculated defines, make sure (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL == 0
+#if (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL != 0
+#error "Internal nodes require an integer number of bits for partitioning."
+#endif
+
 #define NUM_CHILDREN (1UL << BITS_PER_LEVEL)
 #define CHILD_MASK ((1UL << BITS_PER_LEVEL) - 1)
 #define MAX_INDEX ((1UL << NUM_BITS) - 1)

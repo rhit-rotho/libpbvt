@@ -1,10 +1,106 @@
+#define _GNU_SOURCE
+
+#include <assert.h>
+#include <fcntl.h>
+#include <linux/userfaultfd.h>
+#include <malloc.h>
+#include <poll.h>
+#include <sched.h>
+#include <sys/ioctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#include "fasthash.h"
 #include "pbvt.h"
 
+#define STACK_SIZE (8 * 1024 * 1024)
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
+#define xperror(x)                                                             \
+  do {                                                                         \
+    perror(x);                                                                 \
+    exit(-1);                                                                  \
+  } while (0);
+
+int uffd;
+int uffd_monitor(void *args) {
+  // TODO: Watch out for concurrent access of pvs, since this can be modified by
+  // both the pagefault handler and any tasks that might have monitored ranges
+  PVectorState *pvs = args;
+  struct pollfd pollfds[1];
+  struct uffd_msg msg = {};
+  struct uffdio_writeprotect wp;
+
+  printf("Monitoring uffd %d for page faults...\n", uffd);
+
+  pollfds[0].fd = uffd;
+  pollfds[0].events = POLLIN;
+  for (;;) {
+    // TODO: Right now we technically only need the read, since it's blocking,
+    // but according to userfaultfd(2) we should also be doing POLLERR to
+    // resolve any potential issues with our ioctl() calls.
+    if (poll(pollfds, 1, -1) <= 0)
+      xperror("poll(uffd)");
+    if (read(uffd, &msg, sizeof(msg)) < 0)
+      xperror("read(uffd)");
+
+    switch (msg.event) {
+    case UFFD_EVENT_PAGEFAULT:
+      if (msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP) {
+        printf("Handle uffd-wp: %p\n", (void *)msg.arg.pagefault.address);
+
+        wp.range.start = msg.arg.pagefault.address;
+        wp.range.len = 0x1000; // TODO: Replace with _SC_PAGE_SIZE
+        wp.mode = 0;
+
+        Range *r = NULL;
+        for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
+          r = queue_peek(pvs->ranges, i);
+          if (r->address == msg.arg.pagefault.address)
+            break;
+          r = NULL;
+        }
+
+        if (!r) {
+          printf("Couldn't find valid range!\n");
+          abort();
+        }
+
+        printf("Marked %p as dirty\n", (void *)r->address);
+        r->dirty = 1;
+
+        if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp))
+          xperror("ioctl(uffd, UFFDIO_WRITEPROTECT)");
+      }
+      break;
+    default:
+      printf("unrecognized event %d\n", msg.event);
+      break;
+    }
+  }
+  return 0;
+}
+
 PVectorState *pbvt_init(void) {
+  assert((NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL == 0);
+
+  uffd = syscall(SYS_userfaultfd, O_CLOEXEC | UFFD_USER_MODE_ONLY);
+  if (uffd < 0)
+    xperror("userfaultfd");
+
+  struct uffdio_api uffd_api = {};
+  uffd_api.api = UFFD_API;
+  uffd_api.features = UFFD_FEATURE_PAGEFAULT_FLAG_WP;
+
+  if (ioctl(uffd, UFFDIO_API, &uffd_api))
+    xperror("ioctl");
+
   PVectorState *pvs = calloc(1, sizeof(PVectorState));
   pvs->q = queue_create();
+  // TODO: Replace with appropriate datastructure (hash table?)
+  pvs->ranges = queue_create();
+  if (clone(uffd_monitor, malloc(STACK_SIZE) + STACK_SIZE, CLONE_VM, pvs) == -1)
+    xperror("clone");
 
   // create null node
   PVector *v = calloc(1, MAX(sizeof(PVector), sizeof(PVectorLeaf)));
@@ -115,17 +211,13 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
   }
 }
 
-#include "fasthash.h"
-#include <assert.h>
-#include <malloc.h>
-
-void pbvt_test(void) {
+void pbvt_debug(void) {
+  printf("---------PBVT STATS---------\n");
   printf("NUM_BITS       = %d\n", NUM_BITS);
   printf("MAX_INDEX      = %ld\n", MAX_INDEX);
   printf("NUM_CHILDREN   = %ld\n", NUM_CHILDREN);
   printf("BOTTOM_BITS    = %d\n", BOTTOM_BITS);
   printf("MAX_DEPTH      = %d\n", MAX_DEPTH);
-  printf("\n");
   printf("NUM_BOTTOM     = %ld\n", NUM_BOTTOM);
   printf("BITS_PER_LEVEL = %d\n", BITS_PER_LEVEL);
   printf("BOTTOM_MASK    = %ld\n", BOTTOM_MASK);
@@ -133,7 +225,6 @@ void pbvt_test(void) {
 }
 
 void pbvt_stats(PVectorState *pvs) {
-
   printf("Tracked states: %ld\n", queue_size(pvs->q));
   printf("Number of nodes: %ld\n", ht_size(ht));
   printf("Theoretical max: 0x%lx\n", MAX_INDEX);
@@ -190,12 +281,68 @@ void pbvt_stats(PVectorState *pvs) {
   printf("node %.16lx (level: %ld) with %ld refs:\n", pv->hash, pv->level,
          pv->refcount);
 
-  // for (int i = 0, n = NUM_BOTTOM; i < n; ++i)
-  //   printf("%.2x ", pv->bytes[i]);
-  // printf("\n");
-
-  printf("\"");
   for (int i = 0, n = NUM_BOTTOM; i < n; ++i)
-    printf("%s", chars[pv->bytes[i]]);
-  printf("\"\n");
+    printf("%.2x ", pv->bytes[i]);
+  printf("\n");
+
+  //   printf("\"");
+  //   for (int i = 0, n = NUM_BOTTOM; i < n; ++i)
+  //     printf("%s", chars[pv->bytes[i]]);
+  //   printf("\"\n");
+}
+
+uint64_t pbvt_capacity(void) { return MAX_INDEX; }
+
+void pbvt_add_range(PVectorState *pvs, void *range, size_t n) {
+  // TODO: Zero-pad, handle this correctly
+  assert((uint64_t)range % sysconf(_SC_PAGESIZE) == 0);
+  assert(n % NUM_BOTTOM == 0);
+  assert(n % sysconf(_SC_PAGESIZE) == 0);
+
+  // Build bookkeeping
+  for (void *p = range; p < range + n; p += NUM_BOTTOM) {
+    uint64_t hash = fasthash64(p, NUM_BOTTOM, 0);
+    if (!ht_get(ht, hash)) {
+    }
+  }
+
+  printf("Adding range %p-%p\n", range, range + n);
+
+  struct uffdio_register uffd_register = {};
+  uffd_register.range.start = (__u64)range;
+  uffd_register.range.len = n;
+  uffd_register.mode = UFFDIO_REGISTER_MODE_WP;
+  if (ioctl(uffd, UFFDIO_REGISTER, &uffd_register))
+    xperror("ioctl(uffd, UFFDIO_REGISTER)");
+
+  struct uffdio_writeprotect wp = {};
+  wp.range.start = (__u64)range;
+  wp.range.len = n;
+  wp.mode = UFFDIO_WRITEPROTECT_MODE_WP;
+  if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp))
+    xperror("ioctl(uffd, UFFDIO_WRITEPROTECT)");
+
+  Range *r = calloc(1, sizeof(Range));
+  r->address = (uint64_t)range;
+  r->len = n;
+  r->dirty = 0;
+  queue_push(pvs->ranges, r);
+}
+
+void pbvt_snapshot(PVectorState *pvs) {
+  struct uffdio_writeprotect wp;
+  Range *r;
+  for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
+    r = queue_peek(pvs->ranges, i);
+    if (!r->dirty)
+      continue;
+
+    printf("Saving state for %p\n", (void *)r->address);
+    wp.range.start = r->address;
+    wp.range.len = r->len;
+    wp.mode = UFFDIO_WRITEPROTECT_MODE_WP;
+    if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp))
+      xperror("ioctl(uffd, UFFDIO_WRITEPROTECT)");
+    r->dirty = 0;
+  }
 }

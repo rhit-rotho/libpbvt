@@ -1,10 +1,11 @@
-#include "pbvt.h"
-
 #include <assert.h>
 #include <coz.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <sys/mman.h>
 #include <unistd.h>
+
+#include "pbvt.h"
 
 #define MIN(a, b) ((a) > (b) ? (b) : (a))
 int main(int argc, char **argv) {
@@ -18,21 +19,33 @@ int main(int argc, char **argv) {
   if (gc_threshold == -1)
     gc_threshold = INT64_MAX;
 
-  pbvt_test();
   PVectorState *pvs = pbvt_init();
+  uint64_t max_index = pbvt_capacity();
+  pbvt_debug();
 
-  // goto insert_sample;
+  uint8_t *test = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  pbvt_add_range(pvs, test, 0x1000);
+  test[0] = 0x10;
+  for (;;) {
+    printf("Modifying range %p...\n", test);
+    test[0]++;
+    sleep(1);
+    pbvt_snapshot(pvs);
+    sleep(1);
+  }
+
   goto random_insert;
 
 random_insert:
-  uint8_t *tarr = calloc(MAX_INDEX + 1, sizeof(uint8_t));
+  uint8_t *tarr = calloc(max_index + 1, sizeof(uint8_t));
   uint8_t t0 = 0;
   uint8_t t1 = 0;
 
   srand(0);
   for (int64_t i = 1; i < trials; ++i) {
-    uint64_t key = rand() & MAX_INDEX;
-    uint8_t val = rand() & MAX_INDEX;
+    uint64_t key = rand() & max_index;
+    uint8_t val = rand() & max_index;
     pbvt_update_head(pvs, key, pbvt_get_head(pvs, key) ^ val);
     tarr[key] ^= val;
     COZ_PROGRESS;
@@ -41,7 +54,7 @@ random_insert:
       COZ_PROGRESS;
     }
     for (int i = 0; i < 100; ++i) {
-      uint64_t gkey = rand() & MAX_INDEX;
+      uint64_t gkey = rand() & max_index;
       t0 ^= pbvt_get_head(pvs, gkey);
       t1 ^= tarr[gkey];
       if (tarr[gkey] != pbvt_get_head(pvs, gkey))
