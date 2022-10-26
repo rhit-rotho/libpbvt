@@ -23,19 +23,13 @@ int main(int argc, char **argv) {
   uint64_t max_index = pbvt_capacity();
   pbvt_debug();
 
-  uint8_t *test = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  pbvt_add_range(pvs, test, 0x1000);
-  test[0] = 0x10;
-  for (;;) {
-    printf("Modifying range %p...\n", test);
-    test[0]++;
-    sleep(1);
-    pbvt_snapshot(pvs);
-    sleep(1);
-  }
-
-  goto random_insert;
+  uint8_t *test = mmap((void *)0xdeadbeef000UL, 0x4000, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+  for (size_t i = 0; i < 0x4000; ++i)
+    test[i] = i & 0xff;
+  pbvt_add_range(pvs, test, 0x4000);
+  pbvt_print(pvs, "out.dot");
+  goto driver;
 
 random_insert:
   uint8_t *tarr = calloc(max_index + 1, sizeof(uint8_t));
@@ -90,52 +84,61 @@ insert_sample:
   close(fd);
   goto cleanup;
 
-  // driver:
-  //   int auto_update = 1;
-  //   for (;;) {
-  //     char buf[0x100];
-  //     uint64_t idx, val;
-  //     printf("> ");
-  //     fgets(buf, sizeof(buf) - 1, stdin);
-  //     char *pbuf = buf;
-  //     pbuf += 2;
-  //     switch (buf[0]) {
-  //     case 'a':
-  //       pbuf += sscanf(pbuf, "%p %d", &idx, &val);
-  //       printf("Adding %d at 0x%0.16x\n", val, idx);
-  //       queue_push(pvs, pbvt_update(queue_front(pvs), idx, val));
-  //       break;
-  //     case 'g':
-  //       pbuf += sscanf(pbuf, "%lu", &idx);
-  //       printf("old idx: %lu %lu\n", idx, pbvt_states(pvs) - 1);
-  //       idx = MIN(idx, pbvt_states(pvs));
-  //       printf("new idx: %lu\n", idx);
-  //       printf("Garbage collecting oldest %lu items\n", idx);
-  //       pbvt_gc_n(pvs, MAX_DEPTH - 1);
-  //       break;
-  //     case 'q':
-  //       printf("Goodbye!\n");
-  //       exit(0);
-  //       break;
-  //     case 'p':
-  //       // pbvt_print("out.dot", (PVector **)pvs->arr, queue_size(pvs));
-  //       printf("printed to out.dot!\n");
-  //       break;
-  //     case 'u':
-  //       auto_update = !auto_update;
-  //       printf("Set auto-update to %s\n", auto_update ? "true" : "false");
-  //       break;
-  //     case 'f':
-  //       pbuf += sscanf(pbuf, "%p", &idx);
-  //       val = pbvt_get_head(idx);
-  //       printf("Value at %.16lx: %.2x\n", idx, val);
-  //       break;
-  //     default:
-  //       printf("Unrecognized %c\n", buf[0]);
-  //       break;
-  //     }
-  //     // pbvt_print("out.dot", (PVector **)pvs->arr, pvs->pos);
-  //   }
+driver:
+  int auto_update = 1;
+  for (;;) {
+    char buf[0x100];
+    uint64_t idx, val;
+    printf("> ");
+    fgets(buf, sizeof(buf) - 1, stdin);
+    char *pbuf = buf;
+    pbuf += 2;
+    switch (buf[0]) {
+    case 'a':
+      pbuf += sscanf(pbuf, "%p %d", &idx, &val);
+      printf("Adding %d at 0x%0.16x\n", val, idx);
+      pbvt_update_head(pvs, idx, val);
+      break;
+    case 'g':
+      pbuf += sscanf(pbuf, "%lu", &idx);
+      printf("old idx: %lu %lu\n", idx, pbvt_size(pvs) - 1);
+      idx = MIN(idx, pbvt_size(pvs));
+      printf("new idx: %lu\n", idx);
+      printf("Garbage collecting oldest %lu items\n", idx);
+      pbvt_gc_n(pvs, idx);
+      break;
+    case 'q':
+      printf("Goodbye!\n");
+      exit(0);
+      break;
+    case 'p':
+      pbvt_print(pvs, "out.dot");
+      printf("printed to out.dot!\n");
+      break;
+    case 'u':
+      auto_update = !auto_update;
+      printf("Set auto-update to %s\n", auto_update ? "true" : "false");
+      break;
+    case 'f':
+      pbuf += sscanf(pbuf, "%p", &idx);
+      val = pbvt_get_head(pvs, idx);
+      printf("Value at %.16lx: %.2x\n", idx, val);
+      break;
+    case 's':
+      printf("Snapshotting...\n");
+      pbvt_snapshot(pvs);
+      break;
+    case 't':
+      pbuf += sscanf(pbuf, "%p %d", &idx, &val);
+      printf("Modify (transient) %d at 0x%0.16x\n", val, idx);
+      *(uint8_t *)idx = val;
+      break;
+    default:
+      printf("Unrecognized %c\n", buf[0]);
+      break;
+    }
+    pbvt_print(pvs, "out.dot");
+  }
 
 cleanup:
   pbvt_print(pvs, "out.dot");

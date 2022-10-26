@@ -6,6 +6,7 @@
 #include <malloc.h>
 #include <poll.h>
 #include <sched.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -15,6 +16,10 @@
 
 #define STACK_SIZE (8 * 1024 * 1024)
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+
+#define TAG(x) ((uint8_t *)((uint64_t)(x) | 1))
+#define UNTAG(x) ((uint8_t *)((uint64_t)(x) & ~1))
+#define TAGGED(x) (((uint64_t)(x)&1) == 1)
 
 #define xperror(x)                                                             \
   do {                                                                         \
@@ -64,6 +69,22 @@ int uffd_monitor(void *args) {
         if (!r) {
           printf("Couldn't find valid range!\n");
           abort();
+        }
+
+        for (size_t i = 0; i < 0x1000; i += NUM_BOTTOM) {
+          uint64_t hash =
+              fasthash64((uint8_t *)(r->address + i), NUM_BOTTOM, 0);
+          PVectorLeaf *v = ht_get(ht, hash);
+          // Move any leaves out of the way so they don't get clobbered by
+          // writes to this page
+          if ((r->address <= (uint64_t)UNTAG(v->bytes)) &&
+              ((uint64_t)UNTAG(v->bytes) < r->address + 0x1000)) {
+            uint8_t *back = calloc(NUM_BOTTOM, sizeof(uint8_t));
+            printf("Moving backing memory for %.16lx from %p to %p\n", v->hash,
+                   UNTAG(v->bytes), back);
+            memcpy(back, UNTAG(v->bytes), NUM_BOTTOM);
+            v->bytes = TAG(back);
+          }
         }
 
         printf("Marked %p as dirty\n", (void *)r->address);
@@ -125,7 +146,10 @@ void pbvt_cleanup(PVectorState *pvs) {
   while (queue_size(pvs->q) > 0)
     pvector_gc(queue_popleft(pvs->q), MAX_DEPTH - 1);
   queue_free(pvs->q);
-  free(((PVectorLeaf *)ht_get(ht, 0UL))->bytes);
+  while (queue_size(pvs->ranges) > 0)
+    free(queue_popleft(pvs->ranges));
+  queue_free(pvs->ranges);
+  free(UNTAG(((PVectorLeaf *)ht_get(ht, 0UL))->bytes));
   free(ht_get(ht, 0UL));
   ht_free(ht);
   free(pvs);
@@ -190,7 +214,8 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
     }
   } else {
     for (size_t i = 0; i < NUM_BOTTOM; ++i) {
-      fprintf(f, "<%ld>%.2x", i, ((PVectorLeaf *)v)->bytes[i]);
+      PVectorLeaf *l = (PVectorLeaf *)v;
+      fprintf(f, "<%ld>%.2x", i, UNTAG((l->bytes))[i]);
       if (i != NUM_BOTTOM - 1)
         fprintf(f, "|");
     }
@@ -282,7 +307,7 @@ void pbvt_stats(PVectorState *pvs) {
          pv->refcount);
 
   for (int i = 0, n = NUM_BOTTOM; i < n; ++i)
-    printf("%.2x ", pv->bytes[i]);
+    printf("%.2x ", UNTAG(pv->bytes)[i]);
   printf("\n");
 
   //   printf("\"");
@@ -299,11 +324,20 @@ void pbvt_add_range(PVectorState *pvs, void *range, size_t n) {
   assert(n % NUM_BOTTOM == 0);
   assert(n % sysconf(_SC_PAGESIZE) == 0);
 
-  // Build bookkeeping
-  for (void *p = range; p < range + n; p += NUM_BOTTOM) {
-    uint64_t hash = fasthash64(p, NUM_BOTTOM, 0);
-    if (!ht_get(ht, hash)) {
-    }
+  queue_push(pvs->q,
+             pvector_update_n(queue_front(pvs->q), (uint64_t)range, range, n));
+
+  PVectorLeaf *v;
+  for (size_t i = 0; i < n; i += NUM_BOTTOM) {
+    v = ht_get(ht, fasthash64(range + i, NUM_BOTTOM, 0));
+    // Is this region in our malloc'd region, or backed by the memory it
+    // represents? If not, we can make it so and save some space
+    if (!TAGGED(v->bytes))
+      continue;
+    printf("Changing backing memory for %.16lx to %p (was %p)\n", v->hash,
+           range + i, UNTAG(v->bytes));
+    free(UNTAG(v->bytes));
+    v->bytes = range + i;
   }
 
   printf("Adding range %p-%p\n", range, range + n);
@@ -329,15 +363,41 @@ void pbvt_add_range(PVectorState *pvs, void *range, size_t n) {
   queue_push(pvs->ranges, r);
 }
 
+// Similar logic to pvector_update_n
 void pbvt_snapshot(PVectorState *pvs) {
   struct uffdio_writeprotect wp;
   Range *r;
+
+  PVector *c = queue_front(pvs->q);
+  PVector *t;
+  c->refcount++;
+
   for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
     r = queue_peek(pvs->ranges, i);
     if (!r->dirty)
       continue;
 
-    printf("Saving state for %p\n", (void *)r->address);
+    printf("Saving state for %p...\n", (void *)r->address);
+    t = pvector_update_n(c, (uint64_t)r->address, (uint8_t *)r->address,
+                         r->len);
+    pvector_gc(c, MAX_DEPTH - 1);
+    c = t;
+
+    PVectorLeaf *v;
+    for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
+      v = ht_get(ht, fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0));
+      // Is this region in our malloc'd region, or backed by the memory it
+      // represents? If not, we can make it so and save some space
+      if (!TAGGED(v->bytes))
+        continue;
+      printf(
+          "Changing backing memory for %.16lx to %p (was %p) (mem: %.16lx)\n",
+          v->hash, (uint8_t *)r->address + i, UNTAG(v->bytes),
+          fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0));
+      free(UNTAG(v->bytes));
+      v->bytes = (uint8_t *)r->address + i;
+    }
+
     wp.range.start = r->address;
     wp.range.len = r->len;
     wp.mode = UFFDIO_WRITEPROTECT_MODE_WP;
@@ -345,4 +405,6 @@ void pbvt_snapshot(PVectorState *pvs) {
       xperror("ioctl(uffd, UFFDIO_WRITEPROTECT)");
     r->dirty = 0;
   }
+
+  queue_push(pvs->q, c);
 }

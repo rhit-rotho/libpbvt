@@ -7,6 +7,10 @@
 
 extern HashTable *ht;
 
+#define TAG(x) ((uint8_t *)((uint64_t)(x) | 1))
+#define UNTAG(x) ((uint8_t *)((uint64_t)(x) & ~1))
+#define TAGGED(x) (((uint64_t)(x)&1) == 1)
+
 // We can do this without cloning all the child nodes because our tree is
 // persistent; all operations on the data structure will clone any children as
 // necessary, so we can be lazy here.
@@ -14,9 +18,9 @@ PVectorLeaf *pvector_clone_leaf(PVectorLeaf *v) {
   PVectorLeaf *u = calloc(1, sizeof(PVectorLeaf));
   u->refcount = 0;
   u->level = 0;
-  u->bytes = calloc(NUM_BOTTOM, sizeof(uint8_t));
-  if (v->bytes)
-    memcpy(u->bytes, v->bytes, NUM_BOTTOM);
+  u->bytes = TAG(calloc(NUM_BOTTOM, sizeof(uint8_t)));
+  if (UNTAG(v->bytes))
+    memcpy(UNTAG(u->bytes), UNTAG(v->bytes), NUM_BOTTOM);
   return u;
 }
 
@@ -47,7 +51,79 @@ uint8_t pvector_get(PVector *v, uint64_t idx) {
       return 0; // Assume memory is 0-initialized
     v = ht_get(ht, v->children[key]);
   }
-  return ((PVectorLeaf *)v)->bytes[idx & BOTTOM_MASK];
+  return UNTAG((((PVectorLeaf *)v)->bytes))[idx & BOTTOM_MASK];
+}
+
+// TODO: This can be much more optimized
+PVector *pvector_update_n(PVector *v, uint64_t idx, uint8_t *buf, size_t n) {
+  assert(idx + n <= MAX_INDEX);
+
+  // TODO: Can make these unnecessary
+  assert(idx % NUM_BOTTOM == 0);
+  assert(n % NUM_BOTTOM == 0);
+
+  PVector *t;
+
+  // Since the caller still has a reference to v
+  v->refcount++;
+  for (size_t i = 0; i < n; ++i) {
+    t = pvector_update(v, idx + i, buf[i]);
+    pvector_gc(v, MAX_DEPTH - 1);
+    v = t;
+  }
+  return v;
+}
+
+// Identical to update, except instead of modifying a single byte, we set the
+// whole leaf
+PVector *pvector_set_leaf(PVector *v, uint64_t idx, PVectorLeaf *l) {
+  PVector *path[MAX_DEPTH] = {0};
+  uint64_t key;
+  uint64_t hash;
+
+  // build path down into tree
+  for (int i = MAX_DEPTH - 1; i >= 1; --i) {
+    path[i] = v;
+    key = (idx >> ((i - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) & CHILD_MASK;
+    v = ht_get(ht, v->children[key]);
+  }
+
+  v = (PVector *)l;
+  hash = v->hash;
+
+  if (!ht_get(ht, hash))
+    ht_insert(ht, hash, v);
+  PVector *prev = v;
+
+  // Propogate hashes back up the tree
+  uint64_t children[NUM_CHILDREN];
+  for (int i = 1; i < MAX_DEPTH; ++i) {
+    v = path[i];
+    key = (idx >> ((i - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) & CHILD_MASK;
+
+    memcpy(children, v->children, sizeof(children));
+    children[key] = prev->hash;
+    hash = fasthash64(children, sizeof(children), 0);
+
+    // We split this up from the dirty check, since the node we would've
+    // created with may already exist
+    if (ht_get(ht, hash)) {
+      v = ht_get(ht, hash);
+    } else {
+      v = pvector_clone(v, i);
+      ((PVector *)ht_get(ht, v->children[key]))->refcount--;
+      prev->refcount++;
+      v->children[key] = prev->hash;
+      v->hash = hash;
+      ht_insert(ht, hash, v);
+    }
+    prev = v;
+  }
+
+  // We always do this since our caller now has a reference to the new root
+  // node
+  v->refcount++;
+  return v;
 }
 
 PVector *pvector_update(PVector *v, uint64_t idx, uint8_t val) {
@@ -65,8 +141,8 @@ PVector *pvector_update(PVector *v, uint64_t idx, uint8_t val) {
   }
 
   uint8_t bytes[NUM_BOTTOM] = {0};
-  if (((PVectorLeaf *)v)->bytes)
-    memcpy(bytes, ((PVectorLeaf *)v)->bytes, sizeof(bytes));
+  if (UNTAG(((PVectorLeaf *)v)->bytes))
+    memcpy(bytes, UNTAG(((PVectorLeaf *)v)->bytes), sizeof(bytes));
   bytes[idx & BOTTOM_MASK] = val;
   hash = fasthash64(bytes, sizeof(bytes), 0);
 
@@ -74,7 +150,7 @@ PVector *pvector_update(PVector *v, uint64_t idx, uint8_t val) {
     v = ht_get(ht, hash);
   } else {
     v = (PVector *)pvector_clone_leaf((PVectorLeaf *)v);
-    ((PVectorLeaf *)v)->bytes[idx & BOTTOM_MASK] = val;
+    UNTAG(((PVectorLeaf *)v)->bytes)[idx & BOTTOM_MASK] = val;
     v->hash = hash;
     ht_insert(ht, hash, v);
   }
@@ -128,7 +204,8 @@ void pvector_gc(PVector *v, uint64_t level) {
   if (v->refcount == 0) {
     ht_remove(ht, v->hash);
     if (level == 0)
-      free(((PVectorLeaf *)v)->bytes);
+      if (TAGGED(((PVectorLeaf *)v)->bytes))
+        free(UNTAG(((PVectorLeaf *)v)->bytes));
     free(v);
   }
 }
