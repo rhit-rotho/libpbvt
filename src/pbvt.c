@@ -52,7 +52,7 @@ int uffd_monitor(void *args) {
     switch (msg.event) {
     case UFFD_EVENT_PAGEFAULT:
       if (msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP) {
-        printf("Handle uffd-wp: %p\n", (void *)msg.arg.pagefault.address);
+        // printf("Handle uffd-wp: %p\n", (void *)msg.arg.pagefault.address);
 
         wp.range.start = msg.arg.pagefault.address;
         wp.range.len = 0x1000; // TODO: Replace with _SC_PAGE_SIZE
@@ -80,14 +80,14 @@ int uffd_monitor(void *args) {
           if ((r->address <= (uint64_t)UNTAG(l->bytes)) &&
               ((uint64_t)UNTAG(l->bytes) < r->address + 0x1000)) {
             uint8_t *back = calloc(NUM_BOTTOM, sizeof(uint8_t));
-            printf("Moving backing memory for %.16lx from %p to %p\n", l->hash,
-                   UNTAG(l->bytes), back);
+            // printf("Moving backing memory for %.16lx from %p to %p\n",
+            // l->hash, UNTAG(l->bytes), back);
             memcpy(back, UNTAG(l->bytes), NUM_BOTTOM);
             l->bytes = TAG(back);
           }
         }
 
-        printf("Marked %p as dirty\n", (void *)r->address);
+        // printf("Marked %p as dirty\n", (void *)r->address);
         r->dirty = 1;
 
         if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp))
@@ -255,9 +255,43 @@ void pbvt_stats(PVectorState *pvs) {
   printf("Tracked states: %ld\n", queue_size(pvs->q));
   printf("Number of nodes: %ld\n", ht_size(ht));
   printf("Theoretical max: 0x%lx\n", MAX_INDEX);
-  printf("Sparsity: %f%%\n",
-         100.0 * (float)ht_size(ht) / (float)(queue_size(pvs->q) * MAX_INDEX));
-  // malloc_stats();
+
+  size_t overhead = 0;
+  for (size_t i = 0; i < ht->cap; ++i) {
+    HashBucket *hb = &ht->buckets[i];
+    for (size_t j = 0; j < hb->size; ++j) {
+      HashEntry *he = &hb->entries[j];
+      PVector *v = he->value;
+      if (v->level > 0) {
+        overhead += sizeof(PVector);
+        continue;
+      }
+
+      PVectorLeaf *l = (PVectorLeaf *)v;
+      overhead += sizeof(PVectorLeaf);
+      // incorrect hash for our null node
+      if (TAGGED(l->bytes))
+        overhead += NUM_BOTTOM;
+    }
+  }
+
+  Range *r;
+  size_t live = 0;
+  for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
+    r = queue_peekleft(pvs->ranges, i);
+    live += r->len;
+  }
+
+  printf("Size of all nodes and shadowed (copied) memory: %ld bytes\n",
+         overhead);
+  printf("Tracking %ld bytes of live memory\n", live);
+
+  printf("Estimated overhead: %f%%\n", 100.0 * overhead / live);
+
+  printf("Assuming full-copy for each state: %ld bytes\n",
+         live * queue_size(pvs->q));
+  printf("Estimated cost-save (overestimate): %f%%\n",
+         100.0 * (live * queue_size(pvs->q)) / overhead);
 
   // check hash
   for (size_t i = 0; i < ht->cap; ++i) {
@@ -336,8 +370,8 @@ void pbvt_add_range(PVectorState *pvs, void *range, size_t n) {
     // represents? If not, we can make it so and save some space
     if (!TAGGED(v->bytes))
       continue;
-    printf("Changing backing memory for %.16lx to %p (was %p)\n", v->hash,
-           range + i, UNTAG(v->bytes));
+    // printf("Changing backing memory for %.16lx to %p (was %p)\n", v->hash,
+    //        range + i, UNTAG(v->bytes));
     free(UNTAG(v->bytes));
     v->bytes = range + i;
   }
@@ -381,7 +415,7 @@ void pbvt_commit_head(PVectorState *pvs) {
     if (!r->dirty)
       continue;
 
-    printf("Saving state for %p...\n", (void *)r->address);
+    // printf("Saving state for %p...\n", (void *)r->address);
     t = pvector_update_n(c, (uint64_t)r->address, (uint8_t *)r->address,
                          r->len);
     pvector_gc(c, MAX_DEPTH - 1);
@@ -394,10 +428,10 @@ void pbvt_commit_head(PVectorState *pvs) {
       // represents? If not, we can make it so and save some space
       if (!TAGGED(v->bytes))
         continue;
-      printf(
-          "Changing backing memory for %.16lx to %p (was %p) (mem: %.16lx)\n",
-          v->hash, (uint8_t *)r->address + i, UNTAG(v->bytes),
-          fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0));
+      // printf(
+      //     "Changing backing memory for %.16lx to %p (was %p) (mem:
+      //     %.16lx)\n", v->hash, (uint8_t *)r->address + i, UNTAG(v->bytes),
+      //     fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0));
       free(UNTAG(v->bytes));
       v->bytes = (uint8_t *)r->address + i;
     }
@@ -422,8 +456,8 @@ void pbvt_checkout(PVectorState *pvs) {
   for (size_t n = 0; n < queue_size(pvs->ranges); ++n) {
     Range *r = queue_peekleft(pvs->ranges, n);
     for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
-      PVectorLeaf *l = pvector_get_leaf(v, (uint8_t *)r->address + i);
-      memcpy(r->address + i, UNTAG(l->bytes), NUM_BOTTOM);
+      PVectorLeaf *l = pvector_get_leaf(v, r->address + i);
+      memcpy((uint8_t *)r->address + i, UNTAG(l->bytes), NUM_BOTTOM);
     }
   }
 

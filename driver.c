@@ -24,25 +24,39 @@ int main(int argc, char **argv) {
   pbvt_debug();
 
   uint8_t *test =
-      mmap((void *)0x10000UL, 0x4000, PROT_READ | PROT_WRITE,
+      mmap((void *)0x10000UL, 0x10000, PROT_READ | PROT_WRITE,
            MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE | MAP_FIXED, -1, 0);
 
-  // track changes to range
-  pbvt_add_range(pvs, test, 0x4000);
+  // track changes
+  pbvt_add_range(pvs, test, 0x10000);
 
-  test[0] = 1;
+  for (int i = 0; i < 0x100; ++i)
+    test[i] = 0;
   pbvt_commit_head(pvs);
-  assert(test[0] == 1);
-  test[0] = 2;
-  test[0] = 3;
-  pbvt_commit_head(pvs);
-  assert(test[0] == 3);
-  pbvt_checkout(pvs);
-  assert(test[0] == 1);
+
+  for (int64_t i = 1; i < trials; ++i) {
+    for (int i = 0; i < 0x100; ++i)
+      test[rand() & 0xff] = rand() & 0xff;
+    COZ_PROGRESS;
+    pbvt_commit_head(pvs);
+    COZ_PROGRESS;
+    if (pbvt_size(pvs) > gc_threshold) {
+      pbvt_gc_n(pvs, gc_threshold / 2);
+      COZ_PROGRESS;
+    }
+    if (i % 0x400 == 0)
+      pbvt_stats(pvs);
+    COZ_PROGRESS;
+  }
+
+  // pbvt_commit_head(pvs);
+  // assert(test[0] == 3);
+  // pbvt_checkout(pvs);
+  // assert(test[0] == 1);
 
   pbvt_print(pvs, "out.dot");
 
-  goto driver;
+  goto cleanup;
 
 random_insert:
   uint8_t *tarr = calloc(max_index + 1, sizeof(uint8_t));
