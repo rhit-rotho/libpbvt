@@ -202,8 +202,8 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
 
   fprintf(f, "\tv%.16lx [\n", v->hash);
   fprintf(f, "\t\tlabel = \"");
-  fprintf(f, "{<head>%.16lx (%ld refs)|{", v->hash, v->refcount);
   if (level > 0) {
+    fprintf(f, "{<head>%.16lx (%ld refs)|{", v->hash, v->refcount);
     for (size_t i = 0; i < NUM_CHILDREN; ++i) {
       if (v->children[i])
         fprintf(f, "<%ld>%.16lx", i, v->children[i]);
@@ -213,8 +213,9 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
         fprintf(f, "|");
     }
   } else {
+    PVectorLeaf *l = (PVectorLeaf *)v;
+    fprintf(f, "{<head>%.16lx (%ld refs) %p|{", v->hash, v->refcount, l->bytes);
     for (size_t i = 0; i < NUM_BOTTOM; ++i) {
-      PVectorLeaf *l = (PVectorLeaf *)v;
       fprintf(f, "<%ld>%.2x", i, UNTAG((l->bytes))[i]);
       if (i != NUM_BOTTOM - 1)
         fprintf(f, "|");
@@ -356,11 +357,13 @@ void pbvt_add_range(PVectorState *pvs, void *range, size_t n) {
   if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp))
     xperror("ioctl(uffd, UFFDIO_WRITEPROTECT)");
 
-  Range *r = calloc(1, sizeof(Range));
-  r->address = (uint64_t)range;
-  r->len = n;
-  r->dirty = 0;
-  queue_push(pvs->ranges, r);
+  for (size_t i = 0; i < n; i += 0x1000) {
+    Range *r = calloc(1, sizeof(Range));
+    r->address = (uint64_t)range + i;
+    r->len = 0x1000;
+    r->dirty = 0;
+    queue_push(pvs->ranges, r);
+  }
 }
 
 // Similar logic to pvector_update_n
