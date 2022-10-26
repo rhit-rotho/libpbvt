@@ -54,6 +54,18 @@ uint8_t pvector_get(PVector *v, uint64_t idx) {
   return UNTAG((((PVectorLeaf *)v)->bytes))[idx & BOTTOM_MASK];
 }
 
+PVectorLeaf *pvector_get_leaf(PVector *v, uint64_t idx) {
+  uint64_t key;
+
+  for (int i = MAX_DEPTH - 1; i >= 1; --i) {
+    key = (idx >> ((i - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) & CHILD_MASK;
+    if (!v->children[key])
+      return 0; // Assume memory is 0-initialized
+    v = ht_get(ht, v->children[key]);
+  }
+  return (PVectorLeaf *)v;
+}
+
 // TODO: This can be much more optimized
 PVector *pvector_update_n(PVector *v, uint64_t idx, uint8_t *buf, size_t n) {
   assert(idx + n <= MAX_INDEX);
@@ -71,58 +83,6 @@ PVector *pvector_update_n(PVector *v, uint64_t idx, uint8_t *buf, size_t n) {
     pvector_gc(v, MAX_DEPTH - 1);
     v = t;
   }
-  return v;
-}
-
-// Identical to update, except instead of modifying a single byte, we set the
-// whole leaf
-PVector *pvector_set_leaf(PVector *v, uint64_t idx, PVectorLeaf *l) {
-  PVector *path[MAX_DEPTH] = {0};
-  uint64_t key;
-  uint64_t hash;
-
-  // build path down into tree
-  for (int i = MAX_DEPTH - 1; i >= 1; --i) {
-    path[i] = v;
-    key = (idx >> ((i - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) & CHILD_MASK;
-    v = ht_get(ht, v->children[key]);
-  }
-
-  v = (PVector *)l;
-  hash = v->hash;
-
-  if (!ht_get(ht, hash))
-    ht_insert(ht, hash, v);
-  PVector *prev = v;
-
-  // Propogate hashes back up the tree
-  uint64_t children[NUM_CHILDREN];
-  for (int i = 1; i < MAX_DEPTH; ++i) {
-    v = path[i];
-    key = (idx >> ((i - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) & CHILD_MASK;
-
-    memcpy(children, v->children, sizeof(children));
-    children[key] = prev->hash;
-    hash = fasthash64(children, sizeof(children), 0);
-
-    // We split this up from the dirty check, since the node we would've
-    // created with may already exist
-    if (ht_get(ht, hash)) {
-      v = ht_get(ht, hash);
-    } else {
-      v = pvector_clone(v, i);
-      ((PVector *)ht_get(ht, v->children[key]))->refcount--;
-      prev->refcount++;
-      v->children[key] = prev->hash;
-      v->hash = hash;
-      ht_insert(ht, hash, v);
-    }
-    prev = v;
-  }
-
-  // We always do this since our caller now has a reference to the new root
-  // node
-  v->refcount++;
   return v;
 }
 

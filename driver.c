@@ -23,12 +23,25 @@ int main(int argc, char **argv) {
   uint64_t max_index = pbvt_capacity();
   pbvt_debug();
 
-  uint8_t *test = mmap((void *)0xdeadbeef000UL, 0x4000, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
-  for (size_t i = 0; i < 0x4000; ++i)
-    test[i] = i & 0xff;
+  uint8_t *test =
+      mmap((void *)0x10000UL, 0x4000, PROT_READ | PROT_WRITE,
+           MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE | MAP_FIXED, -1, 0);
+
+  // track changes to range
   pbvt_add_range(pvs, test, 0x4000);
+
+  test[0] = 1;
+  pbvt_commit_head(pvs);
+  assert(test[0] == 1);
+  test[0] = 2;
+  test[0] = 3;
+  pbvt_commit_head(pvs);
+  assert(test[0] == 3);
+  pbvt_checkout(pvs);
+  assert(test[0] == 1);
+
   pbvt_print(pvs, "out.dot");
+
   goto driver;
 
 random_insert:
@@ -115,23 +128,31 @@ driver:
       pbvt_print(pvs, "out.dot");
       printf("printed to out.dot!\n");
       break;
-    case 'u':
-      auto_update = !auto_update;
-      printf("Set auto-update to %s\n", auto_update ? "true" : "false");
-      break;
+    // case 'u':
+    //   auto_update = !auto_update;
+    //   printf("Set auto-update to %s\n", auto_update ? "true" : "false");
+    //   break;
     case 'f':
       pbuf += sscanf(pbuf, "%p", &idx);
       val = pbvt_get_head(pvs, idx);
       printf("Value at %.16lx: %.2x\n", idx, val);
       break;
-    case 's':
-      printf("Snapshotting...\n");
-      pbvt_snapshot(pvs);
+    case 'c':
+      printf("Committing...\n");
+      pbvt_commit_head(pvs);
       break;
     case 't':
       pbuf += sscanf(pbuf, "%p %d", &idx, &val);
       printf("Modify (transient) %d at 0x%0.16x\n", val, idx);
       *(uint8_t *)idx = val;
+      break;
+    case 'u':
+      pbuf += sscanf(pbuf, "%p", &idx);
+      printf("Value (transient) at 0x%0.16x: %.2x\n", idx, *(uint8_t *)idx);
+      break;
+    case 'b':
+      printf("Checkout one from head\n");
+      pbvt_checkout(pvs);
       break;
     default:
       printf("Unrecognized %c\n", buf[0]);

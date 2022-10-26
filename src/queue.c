@@ -38,13 +38,23 @@ void *queue_popleft(Queue *q) {
   return v;
 }
 
-void *queue_front(Queue *q) {
+void *queue_popright(Queue *q) {
   assert(queue_size(q) > 0);
-  return q->arr[(q->capacity + q->tail - 1) & (q->capacity - 1)];
+  void *v = q->arr[(q->capacity + q->tail - 1) & (q->capacity - 1)];
+  q->tail = (q->capacity + q->tail - 1) & (q->capacity - 1);
+  return v;
+}
+
+void *queue_front(Queue *q) { return queue_peekright(q, 0); }
+
+// What would be the result of doing popright n times
+void *queue_peekright(Queue *q, uint64_t n) {
+  assert(n < queue_size(q));
+  return q->arr[(-1 + q->capacity + q->tail - n) & (q->capacity - 1)];
 }
 
 // What would be the result of doing popleft n times
-void *queue_peek(Queue *q, uint64_t n) {
+void *queue_peekleft(Queue *q, uint64_t n) {
   assert(n < queue_size(q));
   return q->arr[(q->head + n) & (q->capacity - 1)];
 }

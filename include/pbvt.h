@@ -27,7 +27,8 @@ void pbvt_gc_n(PVectorState *pvs, size_t n);
 size_t pbvt_size(PVectorState *pvs);
 void pbvt_print(PVectorState *pvs, char *path);
 void pbvt_add_range(PVectorState *pvs, void *range, size_t n);
-void pbvt_snapshot(PVectorState *pvs);
+void pbvt_commit_head(PVectorState *pvs);
+void pbvt_checkout(PVectorState *pvs);
 
 // private operations
 void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level);

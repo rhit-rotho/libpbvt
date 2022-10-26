@@ -53,4 +53,4 @@ void pvector_print(char *name, PVector **vs, size_t n);
 PVector *pvector_clone(PVector *v, uint64_t level);
 void pvector_gc(PVector *v, uint64_t level);
 PVector *pvector_update_n(PVector *v, uint64_t idx, uint8_t *buf, size_t n);
-PVector *pvector_set_leaf(PVector *v, uint64_t idx, PVectorLeaf *l);
+PVectorLeaf *pvector_get_leaf(PVector *v, uint64_t idx);

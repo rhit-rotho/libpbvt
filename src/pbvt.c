@@ -60,7 +60,7 @@ int uffd_monitor(void *args) {
 
         Range *r = NULL;
         for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
-          r = queue_peek(pvs->ranges, i);
+          r = queue_peekleft(pvs->ranges, i);
           if (r->address == msg.arg.pagefault.address)
             break;
           r = NULL;
@@ -74,16 +74,16 @@ int uffd_monitor(void *args) {
         for (size_t i = 0; i < 0x1000; i += NUM_BOTTOM) {
           uint64_t hash =
               fasthash64((uint8_t *)(r->address + i), NUM_BOTTOM, 0);
-          PVectorLeaf *v = ht_get(ht, hash);
+          PVectorLeaf *l = ht_get(ht, hash);
           // Move any leaves out of the way so they don't get clobbered by
           // writes to this page
-          if ((r->address <= (uint64_t)UNTAG(v->bytes)) &&
-              ((uint64_t)UNTAG(v->bytes) < r->address + 0x1000)) {
+          if ((r->address <= (uint64_t)UNTAG(l->bytes)) &&
+              ((uint64_t)UNTAG(l->bytes) < r->address + 0x1000)) {
             uint8_t *back = calloc(NUM_BOTTOM, sizeof(uint8_t));
-            printf("Moving backing memory for %.16lx from %p to %p\n", v->hash,
-                   UNTAG(v->bytes), back);
-            memcpy(back, UNTAG(v->bytes), NUM_BOTTOM);
-            v->bytes = TAG(back);
+            printf("Moving backing memory for %.16lx from %p to %p\n", l->hash,
+                   UNTAG(l->bytes), back);
+            memcpy(back, UNTAG(l->bytes), NUM_BOTTOM);
+            l->bytes = TAG(back);
           }
         }
 
@@ -174,7 +174,7 @@ void pbvt_print(PVectorState *pvs, char *path) {
   fprintf(f, "\t\tlabel = \"");
   fprintf(f, "{<timeline>timeline|{");
   for (size_t i = 0, n = queue_size(pvs->q); i < n; ++i) {
-    fprintf(f, "<%ld>%.16lx", i, ((PVector *)queue_peek(pvs->q, i))->hash);
+    fprintf(f, "<%ld>%.16lx", i, ((PVector *)queue_peekleft(pvs->q, i))->hash);
     if (i != n - 1)
       fprintf(f, "|");
   }
@@ -184,11 +184,11 @@ void pbvt_print(PVectorState *pvs, char *path) {
 
   for (size_t i = 0, n = queue_size(pvs->q); i < n; ++i) {
     fprintf(f, "\ttimeline:%ld -> v%.16lx;\n", i,
-            ((PVector *)queue_peek(pvs->q, i))->hash);
+            ((PVector *)queue_peekleft(pvs->q, i))->hash);
   }
 
   for (size_t i = 0, n = queue_size(pvs->q); i < n; ++i)
-    pbvt_print_node(f, pr, (PVector *)queue_peek(pvs->q, i), MAX_DEPTH - 1);
+    pbvt_print_node(f, pr, (PVector *)queue_peekleft(pvs->q, i), MAX_DEPTH - 1);
 
   fprintf(f, "}\n");
   fclose(f);
@@ -214,7 +214,8 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
     }
   } else {
     PVectorLeaf *l = (PVectorLeaf *)v;
-    fprintf(f, "{<head>%.16lx (%ld refs) %p|{", v->hash, v->refcount, l->bytes);
+    fprintf(f, "{<head>%.16lx (%ld refs) %p[%ld]|{", v->hash, v->refcount,
+            UNTAG(l->bytes), NUM_BOTTOM);
     for (size_t i = 0; i < NUM_BOTTOM; ++i) {
       fprintf(f, "<%ld>%.2x", i, UNTAG((l->bytes))[i]);
       if (i != NUM_BOTTOM - 1)
@@ -367,7 +368,7 @@ void pbvt_add_range(PVectorState *pvs, void *range, size_t n) {
 }
 
 // Similar logic to pvector_update_n
-void pbvt_snapshot(PVectorState *pvs) {
+void pbvt_commit_head(PVectorState *pvs) {
   struct uffdio_writeprotect wp;
   Range *r;
 
@@ -376,7 +377,7 @@ void pbvt_snapshot(PVectorState *pvs) {
   c->refcount++;
 
   for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
-    r = queue_peek(pvs->ranges, i);
+    r = queue_peekleft(pvs->ranges, i);
     if (!r->dirty)
       continue;
 
@@ -410,4 +411,26 @@ void pbvt_snapshot(PVectorState *pvs) {
   }
 
   queue_push(pvs->q, c);
+}
+
+void pbvt_checkout(PVectorState *pvs) {
+  assert(queue_size(pvs->q) > 1);
+
+  PVector *v = queue_peekright(pvs->q, 1);
+
+  // This puts us in a transient state
+  for (size_t n = 0; n < queue_size(pvs->ranges); ++n) {
+    Range *r = queue_peekleft(pvs->ranges, n);
+    for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
+      PVectorLeaf *l = pvector_get_leaf(v, (uint8_t *)r->address + i);
+      memcpy(r->address + i, UNTAG(l->bytes), NUM_BOTTOM);
+    }
+  }
+
+  pvector_gc(queue_popright(pvs->q), MAX_DEPTH - 1);
+
+  // Put us back in non-transient state, commit adds another state, so we just
+  // drop it
+  pbvt_commit_head(pvs);
+  pvector_gc(queue_popright(pvs->q), MAX_DEPTH - 1);
 }
