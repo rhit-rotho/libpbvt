@@ -14,12 +14,13 @@ extern HashTable *ht;
 // We can do this without cloning all the child nodes because our tree is
 // persistent; all operations on the data structure will clone any children as
 // necessary, so we can be lazy here.
-PVectorLeaf *pvector_clone_leaf(PVectorLeaf *v) {
+PVectorLeaf *pvector_clone_leaf(PVectorLeaf *l) {
   PVectorLeaf *u = calloc(1, sizeof(PVectorLeaf));
   u->refcount = 0;
+  // u->level = 0;
   u->bytes = TAG(calloc(NUM_BOTTOM, sizeof(uint8_t)));
-  if (UNTAG(v->bytes))
-    memcpy(UNTAG(u->bytes), UNTAG(v->bytes), NUM_BOTTOM);
+  if (UNTAG(l->bytes))
+    memcpy(UNTAG(u->bytes), UNTAG(l->bytes), NUM_BOTTOM);
   return u;
 }
 
@@ -128,6 +129,7 @@ PVector *pvector_update(PVector *v, uint64_t idx, uint8_t val) {
       v = ht_get(ht, hash);
     } else {
       v = pvector_clone(v);
+      // v->level = i;
       ((PVector *)ht_get(ht, v->children[key]))->refcount--;
       prev->refcount++;
       v->children[key] = prev->hash;
@@ -159,9 +161,8 @@ void pvector_gc(PVector *v, uint64_t level) {
   }
   if (v->refcount == 0) {
     ht_remove(ht, v->hash);
-    if (level == 0)
-      if (TAGGED(((PVectorLeaf *)v)->bytes))
-        free(UNTAG(((PVectorLeaf *)v)->bytes));
+    if (level == 0 && TAGGED(((PVectorLeaf *)v)->bytes))
+      free(UNTAG(((PVectorLeaf *)v)->bytes));
     free(v);
   }
 }

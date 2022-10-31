@@ -44,8 +44,7 @@ int main(int argc, char **argv) {
   assert(test[0] == 3);
   test[0] = 4;
   // We didn't commit the previous change, so it gets discarded
-  pbvt_checkout(pvs, 1);
-  printf("%d\n", test[0]);
+  pbvt_checkout_n(pvs, 1);
   assert(test[0] == 1);
 
   for (int i = 0; i < 0x100; ++i)
@@ -74,28 +73,6 @@ int main(int argc, char **argv) {
 
   pbvt_print(pvs, "out.dot");
 
-  goto cleanup;
-
-insert_sample:
-  // insert characters from sample.txt
-  int fd = open("sample.txt", O_RDONLY);
-  size_t pos = 0;
-  char c;
-  for (;;) {
-    int nbytes = read(fd, &c, 1);
-    if (nbytes < 0)
-      perror("read");
-    if (nbytes == 0)
-      break;
-    // printf("%c", c);
-    pbvt_update_head(pvs, pos, c);
-    if (pbvt_size(pvs) > gc_threshold) {
-      pbvt_gc_n(pvs, gc_threshold / 2);
-      COZ_PROGRESS;
-    }
-    pos++;
-  }
-  close(fd);
   goto cleanup;
 
 driver:

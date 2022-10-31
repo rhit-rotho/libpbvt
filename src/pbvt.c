@@ -11,8 +11,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-#include "fasthash.h"
 #include "pbvt.h"
+#include "fasthash.h"
 
 #define STACK_SIZE (8 * 1024 * 1024)
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -90,6 +90,7 @@ int uffd_monitor(void *args) {
   return 0;
 }
 
+void *clone_stk;
 PVectorState *pbvt_init(void) {
   uffd = syscall(SYS_userfaultfd, O_CLOEXEC | UFFD_USER_MODE_ONLY);
   if (uffd < 0)
@@ -103,17 +104,19 @@ PVectorState *pbvt_init(void) {
     xperror("ioctl");
 
   PVectorState *pvs = calloc(1, sizeof(PVectorState));
-  pvs->states = queue_create();
+  pvs->states = ht_create();
   // TODO: Replace with appropriate datastructure (hash table?)
   pvs->ranges = queue_create();
-  if (clone(uffd_monitor, malloc(STACK_SIZE) + STACK_SIZE, CLONE_VM, pvs) == -1)
+  clone_stk = malloc(STACK_SIZE);
+  if (clone(uffd_monitor, clone_stk + STACK_SIZE, CLONE_VM, pvs) == -1)
     xperror("clone");
 
   // Create our null node ("null object" pattern if you like OOP)
   PVector *v = calloc(1, MAX(sizeof(PVector), sizeof(PVectorLeaf)));
   v->hash = 0UL;
-  pvs->head = pbvt_commit_create(v, NULL, NULL);
-  queue_push(pvs->states, v);
+  Commit *h = pbvt_commit_create(v, NULL, NULL);
+  pvs->head = h;
+  ht_insert(pvs->states, h->hash, h);
 
   // Create table for hashconsing ("flyweight pattern" if you like OOP)
   ht = ht_create();
@@ -145,26 +148,80 @@ void pbvt_commit_free(Commit *c) {
 }
 
 void pbvt_cleanup(PVectorState *pvs) {
-  while (queue_size(pvs->states) > 0)
-    pbvt_commit_free(queue_popleft(pvs->states));
-  queue_free(pvs->states);
+  // Free commits
+  for (size_t i = 0; i < pvs->states->cap; ++i) {
+    HashBucket *bucket = &pvs->states->buckets[i];
+    for (size_t j = 0; j < bucket->size; ++j) {
+      HashEntry *he = &bucket->entries[j];
+      pbvt_commit_free(he->value);
+    }
+  }
+  ht_free(pvs->states);
+
+  // Free ranges
   while (queue_size(pvs->ranges) > 0)
     free(queue_popleft(pvs->ranges));
   queue_free(pvs->ranges);
+
+  // Free null node
   free(UNTAG(((PVectorLeaf *)ht_get(ht, 0UL))->bytes));
   free(ht_get(ht, 0UL));
+  ht_remove(ht, 0UL);
+
+  for (size_t i = 0; i < ht->cap; ++i) {
+    HashBucket *bucket = &ht->buckets[i];
+    for (size_t j = 0; j < bucket->size; ++j) {
+      HashEntry *he = &bucket->entries[j];
+      PVector *v = he->value;
+      printf("WARNING: Untraced item %.16lx\n", v->hash);
+    }
+  }
   ht_free(ht);
+
+  // TODO: Make uffd_monitor responsible for managing pvs, and make these client
+  // stubs for message passing to another thread.
+  free(clone_stk);
   free(pvs);
 }
 
 void pbvt_gc_n(PVectorState *pvs, size_t n) {
-  // TODO: What is a good abstraction here? The obvious thing to do would be to
-  // trim the n oldest states, but we currently don't have enough information to
-  // calculate that.
-  printf("%s:%d(%p, %ld) Not implemented\n", __FUNCTION__, __LINE__, pvs, n);
+  size_t len = 0;
+  Commit *h = pvs->head;
+  while (h) {
+    h = h->parent;
+    len++;
+  }
+
+  assert(n < len);
+  h = pvs->head;
+  for (size_t i = 0; i < -1 + len - n; ++i)
+    h = h->parent;
+  Commit *tail = h;
+  h = h->parent;
+
+  size_t t = 0;
+  while (h) {
+    t++;
+    pvector_gc(h->current, MAX_DEPTH - 1);
+    ht_remove(pvs->states, h->hash);
+    Commit *p = h->parent;
+    pbvt_commit_free(h);
+    h = p;
+  }
+  tail->parent = NULL;
+  assert(t == n);
 }
 
-size_t pbvt_size(PVectorState *pvs) { return queue_size(pvs->states); }
+void pbvt_checkout_n(PVectorState *pvs, size_t depth) {
+  Commit *h = pvs->head;
+  for (size_t i = 0; i < depth; ++i) {
+    h = h->parent;
+    assert(h);
+  }
+  pbvt_checkout(pvs, h);
+}
+
+size_t pbvt_size(PVectorState *pvs) { return ht_size(pvs->states); }
 
 void pbvt_print(PVectorState *pvs, char *path) {
   HashTable *pr = ht_create();
@@ -175,27 +232,27 @@ void pbvt_print(PVectorState *pvs, char *path) {
   fprintf(f, "\tnode[shape=record];\n");
 
   // TODO: This is now a DAG
-  fprintf(f, "\ttimeline [\n");
-  fprintf(f, "\t\tlabel = \"");
-  fprintf(f, "{<timeline>timeline|{");
-  for (size_t i = 0, n = queue_size(pvs->states); i < n; ++i) {
-    fprintf(f, "<%ld>%.16lx", i,
-            ((PVector *)queue_peekleft(pvs->states, i))->hash);
-    if (i != n - 1)
-      fprintf(f, "|");
-  }
-  fprintf(f, "}}");
-  fprintf(f, "\";\n");
-  fprintf(f, "\t];\n");
+  // fprintf(f, "\ttimeline [\n");
+  // fprintf(f, "\t\tlabel = \"");
+  // fprintf(f, "{<timeline>timeline|{");
+  // for (size_t i = 0, n = ht_size(pvs->states); i < n; ++i) {
+  //   fprintf(f, "<%ld>%.16lx", i,
+  //           ((PVector *)ht_size(pvs->states, i))->hash);
+  //   if (i != n - 1)
+  //     fprintf(f, "|");
+  // }
+  // fprintf(f, "}}");
+  // fprintf(f, "\";\n");
+  // fprintf(f, "\t];\n");
 
-  for (size_t i = 0, n = queue_size(pvs->states); i < n; ++i) {
-    fprintf(f, "\ttimeline:%ld -> v%.16lx;\n", i,
-            ((PVector *)queue_peekleft(pvs->states, i))->hash);
-  }
+  // for (size_t i = 0, n = ht_size(pvs->states); i < n; ++i) {
+  //   fprintf(f, "\ttimeline:%ld -> v%.16lx;\n", i,
+  //           ((PVector *)ht_size(pvs->states, i))->hash);
+  // }
 
-  for (size_t i = 0, n = queue_size(pvs->states); i < n; ++i)
-    pbvt_print_node(f, pr, (PVector *)queue_peekleft(pvs->states, i),
-                    MAX_DEPTH - 1);
+  // for (size_t i = 0, n = queue_size(pvs->states); i < n; ++i)
+  //   pbvt_print_node(f, pr, (PVector *)queue_peekleft(pvs->states, i),
+  //                   MAX_DEPTH - 1);
 
   fprintf(f, "}\n");
   fclose(f);
@@ -268,7 +325,7 @@ void pbvt_debug(void) {
 }
 
 void pbvt_stats(PVectorState *pvs) {
-  printf("Tracked states: %ld\n", queue_size(pvs->states));
+  printf("Tracked states: %ld\n", ht_size(pvs->states));
   printf("Number of nodes: %ld\n", ht_size(ht));
   printf("Theoretical max: 0x%lx\n", MAX_INDEX);
 
@@ -284,7 +341,7 @@ void pbvt_stats(PVectorState *pvs) {
 
   // printf("Estimated overhead: %f%%\n", 100.0 * overhead / live);
 
-  size_t full_copy_sz = live * queue_size(pvs->states);
+  size_t full_copy_sz = live * ht_size(pvs->states);
   printf("Assuming full-copy for each state: %ld bytes\n", full_copy_sz);
   //   printf("Estimated reduction in overhead (overestimate): %f%%\n",
   //          100.0 * ((float)overhead - full_copy_sz) / full_copy_sz);
@@ -300,20 +357,18 @@ void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
 
   PVector *c = pvector_update_n(pvs->head->current, (uint64_t)range, range, n);
   Commit *h = pbvt_commit_create(c, pvs->head, NULL);
-  queue_push(pvs->states, h);
+  ht_insert(pvs->states, h->hash, h);
   pvs->head = h;
 
-  PVectorLeaf *v;
+  PVectorLeaf *l;
   for (size_t i = 0; i < n; i += NUM_BOTTOM) {
-    v = ht_get(ht, fasthash64(range + i, NUM_BOTTOM, 0));
+    l = ht_get(ht, fasthash64(range + i, NUM_BOTTOM, 0));
     // Is this region in our malloc'd region, or backed by the memory it
     // represents? If not, we can make it so and save some space
-    if (!TAGGED(v->bytes))
+    if (!TAGGED(l->bytes))
       continue;
-    // printf("Changing backing memory for %.16lx to %p (was %p)\n", v->hash,
-    //        range + i, UNTAG(v->bytes));
-    free(UNTAG(v->bytes));
-    v->bytes = range + i;
+    free(UNTAG(l->bytes));
+    l->bytes = range + i;
   }
 
   struct uffdio_register uffd_register = {};
@@ -333,7 +388,7 @@ void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
 }
 
 // Similar logic to pvector_update_n
-void pbvt_commit(PVectorState *pvs, char *name) {
+Commit *pbvt_commit(PVectorState *pvs, char *name) {
   Range *r;
 
   Commit *h = pvs->head;
@@ -349,30 +404,28 @@ void pbvt_commit(PVectorState *pvs, char *name) {
     // printf("Saving state for %p...\n", (void *)r->address);
     t = pvector_update_n(c, (uint64_t)r->address, (uint8_t *)r->address,
                          r->len);
+    t->refcount--;
     pvector_gc(c, MAX_DEPTH - 1);
     c = t;
 
-    PVectorLeaf *v;
+    PVectorLeaf *l;
     for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
-      v = ht_get(ht, fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0));
+      l = ht_get(ht, fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0));
       // Is this region in our malloc'd region, or backed by the memory it
       // represents? If not, we can make it so and save some space
-      if (!TAGGED(v->bytes))
+      if (!TAGGED(l->bytes))
         continue;
-      // printf(
-      //     "Changing backing memory for %.16lx to %p (was %p) (mem:
-      //     %.16lx)\n", v->hash, (uint8_t *)r->address + i, UNTAG(v->bytes),
-      //     fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0));
-      free(UNTAG(v->bytes));
-      v->bytes = (uint8_t *)r->address + i;
+      free(UNTAG(l->bytes));
+      l->bytes = (uint8_t *)r->address + i;
     }
 
     pbvt_write_protect(r, 0);
   }
 
   h = pbvt_commit_create(c, h, name);
-  queue_push(pvs->states, h);
+  ht_insert(pvs->states, h->hash, h);
   pvs->head = h;
+  return h;
 }
 
 void pbvt_write_protect(Range *r, uint8_t dirty) {
@@ -392,16 +445,8 @@ void pbvt_write_protect(Range *r, uint8_t dirty) {
     xperror("ioctl(uffd, UFFDIO_WRITEPROTECT)");
 }
 
-void pbvt_checkout(PVectorState *pvs, uint64_t back) {
-  // Commit *h = NULL;
-  // for (size_t i = 0; i < queue_size(pvs->states); ++i)
-  //   if (((Commit *)queue_peekleft(pvs->states, i))->hash == hash)
-  //     h = queue_peekleft(pvs->states, i);
-  Commit *h = pvs->head;
-  for (uint64_t i = 0; i < back && h; ++i)
-    h = h->parent;
-  assert(h);
-  PVector *v = h->current;
+void pbvt_checkout(PVectorState *pvs, Commit *commit) {
+  PVector *v = commit->current;
 
   // This puts us in a transient state
   for (size_t n = 0; n < queue_size(pvs->ranges); ++n) {
@@ -410,10 +455,12 @@ void pbvt_checkout(PVectorState *pvs, uint64_t back) {
       PVectorLeaf *l = pvector_get_leaf(v, (uint64_t)r->address + i);
       if (fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0) != l->hash)
         memcpy((uint8_t *)r->address + i, UNTAG(l->bytes), NUM_BOTTOM);
+      if (!TAGGED(l->bytes))
+        continue;
+      free(UNTAG(l->bytes));
+      l->bytes = (uint8_t *)r->address + i;
+      pbvt_write_protect(r, 0);
     }
   }
-
-  // Put us back in non-transient state, commit adds another state, so just drop
-  // it
-  pbvt_commit(pvs, NULL);
+  pvs->head = commit;
 }

@@ -24,7 +24,7 @@ typedef struct Commit {
 typedef struct PVectorState {
   Commit *head;
   // Queue *heads;
-  Queue *states;
+  HashTable *states;
   Queue *ranges;
 } PVectorState;
 
@@ -37,8 +37,11 @@ size_t pbvt_size(PVectorState *pvs);
 void pbvt_print(PVectorState *pvs, char *path);
 void pbvt_track_range(PVectorState *pvs, void *range, size_t n);
 
-void pbvt_commit(PVectorState *pvs, char *name);
-void pbvt_checkout(PVectorState *pvs, uint64_t back);
+void pbvt_checkout_n(PVectorState *pvs, size_t depth);
+Commit *pbvt_commit(PVectorState *pvs, char *name);
+void pbvt_checkout(PVectorState *pvs, Commit *commit);
+Commit *pbvt_commit_by_name(PVectorState *pvs, char *name);
+Commit *pbvt_commit_parent(PVectorState *pvs, char *name);
 
 // private operations
 void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level);
