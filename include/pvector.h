@@ -7,9 +7,9 @@
 
 // For 4-level paging (see "Paging" in Volume 3 of the Intel 64 and IA-32
 // Architectures Software Developer's manual)
-#define NUM_BITS (49)
-#define BITS_PER_LEVEL (4)
-#define BOTTOM_BITS (5)
+#define NUM_BITS (48)
+#define BITS_PER_LEVEL (3)
+#define BOTTOM_BITS (6)
 
 // Calculated defines, make sure (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL == 0
 #if (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL != 0
@@ -28,19 +28,12 @@ typedef struct PVector PVector;
 typedef struct PVector {
   uint64_t refcount;
   uint64_t hash;
-#ifndef NDEBUG
-  uint64_t level;
-#endif
   uint64_t children[NUM_CHILDREN];
 } PVector;
 
 typedef struct PVectorLeaf {
   uint64_t refcount;
   uint64_t hash;
-#ifndef NDEBUG
-  uint64_t level;
-#endif
-  // uint8_t bytes[1 << BOTTOM_BITS];
   uint8_t *bytes;
 } PVectorLeaf;
 
@@ -50,7 +43,7 @@ PVector *pvector_update(PVector *v, uint64_t idx, uint8_t val);
 void pvector_print(char *name, PVector **vs, size_t n);
 
 // private methods
-PVector *pvector_clone(PVector *v, uint64_t level);
+PVector *pvector_clone(PVector *v);
 void pvector_gc(PVector *v, uint64_t level);
 PVector *pvector_update_n(PVector *v, uint64_t idx, uint8_t *buf, size_t n);
 PVectorLeaf *pvector_get_leaf(PVector *v, uint64_t idx);

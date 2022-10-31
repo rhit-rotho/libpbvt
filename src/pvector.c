@@ -17,19 +17,15 @@ extern HashTable *ht;
 PVectorLeaf *pvector_clone_leaf(PVectorLeaf *v) {
   PVectorLeaf *u = calloc(1, sizeof(PVectorLeaf));
   u->refcount = 0;
-  u->level = 0;
   u->bytes = TAG(calloc(NUM_BOTTOM, sizeof(uint8_t)));
   if (UNTAG(v->bytes))
     memcpy(UNTAG(u->bytes), UNTAG(v->bytes), NUM_BOTTOM);
   return u;
 }
 
-PVector *pvector_clone(PVector *v, uint64_t level) {
+PVector *pvector_clone(PVector *v) {
   PVector *u = calloc(1, sizeof(PVector));
   u->refcount = 0;
-#ifndef NDEBUG
-  u->level = level;
-#endif
   for (size_t i = 0; i < NUM_CHILDREN; ++i) {
     u->children[i] = v->children[i];
     if (u->children[i]) {
@@ -131,7 +127,7 @@ PVector *pvector_update(PVector *v, uint64_t idx, uint8_t val) {
     if (ht_get(ht, hash)) {
       v = ht_get(ht, hash);
     } else {
-      v = pvector_clone(v, i);
+      v = pvector_clone(v);
       ((PVector *)ht_get(ht, v->children[key]))->refcount--;
       prev->refcount++;
       v->children[key] = prev->hash;

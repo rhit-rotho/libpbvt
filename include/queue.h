@@ -12,12 +12,15 @@ typedef struct Queue {
 
 // public methods
 Queue *queue_create(void);
-
-void queue_push(Queue *q, void *v);
-void *queue_front(Queue *q);
-void *queue_popleft(Queue *q);
-void *queue_popright(Queue *q);
 void queue_free(Queue *q);
-uint64_t queue_size(Queue *q);
+
+void *queue_front(Queue *q);
 void *queue_peekleft(Queue *q, uint64_t n);
 void *queue_peekright(Queue *q, uint64_t n);
+
+void queue_push(Queue *q, void *v);
+
+void *queue_popleft(Queue *q);
+void *queue_popright(Queue *q);
+
+uint64_t queue_size(Queue *q);
