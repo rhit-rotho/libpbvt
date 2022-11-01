@@ -53,3 +53,4 @@ Commit *pbvt_commit_create(PVector *v, Commit *p, char *name);
 void pbvt_commit_free(Commit *c);
 
 void pbvt_write_protect(Range *r, uint8_t);
+void pbvt_write_protect_internal(int uffd, Range *r, uint8_t dirty) ;

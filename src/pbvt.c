@@ -11,8 +11,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-#include "pbvt.h"
 #include "fasthash.h"
+#include "pbvt.h"
 
 #define STACK_SIZE (8 * 1024 * 1024)
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -21,41 +21,110 @@
 #define UNTAG(x) ((uint8_t *)((uint64_t)(x) & ~1))
 #define TAGGED(x) (((uint64_t)(x)&1) == 1)
 
+#define MSG_HANDSHAKE (0x40)
+#define MSG_REGISTER_RANGE (0x41)
+#define MSG_WRITE_PROTECT (0x42)
+#define MSG_SHUTDOWN (0x43)
+#define MSG_SUCCESS (0x44)
+
 #define xperror(x)                                                             \
   do {                                                                         \
     perror(x);                                                                 \
     exit(-1);                                                                  \
   } while (0);
 
-int uffd;
 int uffd_monitor(void *args) {
-  // TODO: Watch out for concurrent access of pvs, since this can be modified by
-  // both the pagefault handler and any tasks that might have monitored ranges
-  // TODO: Actually, it makes more sense to communicate with "pbvt" over a
-  // socket that sends commands to this thread. That way we avoid races, and it
-  // becomes possible to call "pbvt_track_range" in the main thread
-  PVectorState *pvs = args;
-  struct pollfd pollfds[1];
+  struct pollfd pollfds[2];
   struct uffd_msg msg = {};
 
-  printf("Monitoring uffd %d for page faults...\n", uffd);
+  PVectorState *pvs = ((void **)args)[0];
+  int infd = ((void **)args)[1];
+  int outfd = ((void **)args)[2];
+
+  int uffd =
+      syscall(SYS_userfaultfd, O_NONBLOCK | O_CLOEXEC | UFFD_USER_MODE_ONLY);
+  if (uffd < 0)
+    xperror("userfaultfd");
+
+  struct uffdio_api uffd_api = {};
+  uffd_api.api = UFFD_API;
+  uffd_api.features = UFFD_FEATURE_PAGEFAULT_FLAG_WP;
+  if (ioctl(uffd, UFFDIO_API, &uffd_api))
+    xperror("ioctl");
 
   pollfds[0].fd = uffd;
-  pollfds[0].events = POLLIN;
+  pollfds[0].events = POLLIN | POLLERR;
+  pollfds[1].fd = (int)((void **)args)[1];
+  pollfds[1].events = POLLIN | POLLHUP | POLLNVAL;
+
+  char c;
+  read(infd, &c, 1);
+  assert(c == MSG_HANDSHAKE);
+  c = MSG_SUCCESS;
+  write(outfd, &c, 1);
+
   for (;;) {
     // TODO: Right now we technically only need the read, since it's blocking,
     // but according to userfaultfd(2) we should also be doing POLLERR to
     // resolve any potential issues with our ioctl() calls.
-    if (poll(pollfds, 1, -1) <= 0)
+    if (poll(pollfds, 2, -1) < 0)
       xperror("poll(uffd)");
+
+    if (pollfds[1].revents & POLLIN) {
+      if (read(infd, &c, 1) < 0)
+        xperror("monitor read");
+      switch (c) {
+      case MSG_REGISTER_RANGE: {
+        uint64_t range;
+        uint64_t n;
+        read(infd, &range, sizeof(range));
+        read(infd, &n, sizeof(n));
+
+        struct uffdio_register uffd_register = {};
+        uffd_register.range.start = (__u64)range;
+        uffd_register.range.len = n;
+        uffd_register.mode = UFFDIO_REGISTER_MODE_WP;
+        if (ioctl(uffd, UFFDIO_REGISTER, &uffd_register))
+          xperror("ioctl(uffd, UFFDIO_REGISTER)");
+
+        c = MSG_SUCCESS;
+        write(outfd, &c, 1);
+        break;
+      }
+      case MSG_WRITE_PROTECT: {
+        Range *r;
+        uint8_t dirty;
+        read(infd, &r, sizeof(r));
+        read(infd, &dirty, sizeof(dirty));
+
+        pbvt_write_protect_internal(uffd, r, dirty);
+
+        c = MSG_SUCCESS;
+        write(outfd, &c, 1);
+        break;
+      }
+      case MSG_SHUTDOWN:
+        c = MSG_SUCCESS;
+        write(outfd, &c, 1);
+        goto cleanup;
+      default:
+        xperror("userfaultfd_monitor: unrecognized char");
+        break;
+      }
+
+      continue;
+    }
+
+    // TODO: Implement
+    if (pollfds[0].revents & POLLERR)
+      xperror("POLLERR in userfaultfd");
+
     if (read(uffd, &msg, sizeof(msg)) < 0)
       xperror("read(uffd)");
 
     switch (msg.event) {
     case UFFD_EVENT_PAGEFAULT:
       if (msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP) {
-        // printf("Handle uffd-wp: %p\n", (void *)msg.arg.pagefault.address);
-
         Range *r = NULL;
         for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
           r = queue_peekleft(pvs->ranges, i);
@@ -79,7 +148,7 @@ int uffd_monitor(void *args) {
           }
         }
 
-        pbvt_write_protect(r, 1);
+        pbvt_write_protect_internal(uffd, r, 1);
       }
       break;
     default:
@@ -87,33 +156,45 @@ int uffd_monitor(void *args) {
       break;
     }
   }
-  return 0;
+
+cleanup:
+  c = MSG_SUCCESS;
+  write(outfd, &c, 1);
+  exit(EXIT_SUCCESS);
 }
 
 void *clone_stk;
+int pipefd[2];
 PVectorState *pbvt_init(void) {
-  uffd = syscall(SYS_userfaultfd, O_CLOEXEC | UFFD_USER_MODE_ONLY);
-  if (uffd < 0)
-    xperror("userfaultfd");
-
-  struct uffdio_api uffd_api = {};
-  uffd_api.api = UFFD_API;
-  uffd_api.features = UFFD_FEATURE_PAGEFAULT_FLAG_WP;
-
-  if (ioctl(uffd, UFFDIO_API, &uffd_api))
-    xperror("ioctl");
-
   PVectorState *pvs = calloc(1, sizeof(PVectorState));
   pvs->states = ht_create();
   // TODO: Replace with appropriate datastructure (hash table?)
   pvs->ranges = queue_create();
   clone_stk = malloc(STACK_SIZE);
-  if (clone(uffd_monitor, clone_stk + STACK_SIZE, CLONE_VM, pvs) == -1)
+
+  int p2c[2];
+  int c2p[2];
+  pipe(p2c);
+  pipe(c2p);
+  pipefd[0] = p2c[1];
+  pipefd[1] = c2p[0];
+
+  void *args[3];
+  args[0] = pvs;
+  args[1] = (void *)p2c[0];
+  args[2] = (void *)c2p[1];
+  if (clone(uffd_monitor, clone_stk + STACK_SIZE, CLONE_VM, args) == -1)
     xperror("clone");
+
+  char c = MSG_HANDSHAKE;
+  write(pipefd[0], &c, 1);
+  read(pipefd[1], &c, 1);
+  assert(c == MSG_SUCCESS);
 
   // Create our null node ("null object" pattern if you like OOP)
   PVector *v = calloc(1, MAX(sizeof(PVector), sizeof(PVectorLeaf)));
   v->hash = 0UL;
+  v->refcount = 1;
   Commit *h = pbvt_commit_create(v, NULL, NULL);
   pvs->head = h;
   ht_insert(pvs->states, h->hash, h);
@@ -137,7 +218,6 @@ Commit *pbvt_commit_create(PVector *v, Commit *p, char *name) {
   c->hash = fasthash64(content, sizeof(content), 0);
   c->current = v;
   c->parent = p;
-  v->refcount++;
   return c;
 }
 
@@ -148,6 +228,11 @@ void pbvt_commit_free(Commit *c) {
 }
 
 void pbvt_cleanup(PVectorState *pvs) {
+  char c = MSG_SHUTDOWN;
+  write(pipefd[0], &c, 1);
+  read(pipefd[1], &c, 1);
+  assert(c == MSG_SUCCESS);
+
   // Free commits
   for (size_t i = 0; i < pvs->states->cap; ++i) {
     HashBucket *bucket = &pvs->states->buckets[i];
@@ -173,7 +258,9 @@ void pbvt_cleanup(PVectorState *pvs) {
     for (size_t j = 0; j < bucket->size; ++j) {
       HashEntry *he = &bucket->entries[j];
       PVector *v = he->value;
-      printf("WARNING: Untraced item %.16lx\n", v->hash);
+      // if (v->level == MAX_DEPTH - 1)
+      //   printf("WARNING: Untraced item %.16lx %ld %ld\n", v->hash, v->level,
+      //          v->refcount);
     }
   }
   ht_free(ht);
@@ -202,7 +289,6 @@ void pbvt_gc_n(PVectorState *pvs, size_t n) {
   size_t t = 0;
   while (h) {
     t++;
-    pvector_gc(h->current, MAX_DEPTH - 1);
     ht_remove(pvs->states, h->hash);
     Commit *p = h->parent;
     pbvt_commit_free(h);
@@ -230,6 +316,8 @@ void pbvt_print(PVectorState *pvs, char *path) {
     return;
   fprintf(f, "digraph {\n");
   fprintf(f, "\tnode[shape=record];\n");
+
+  fprintf(f, "// %p\n", pvs);
 
   // TODO: This is now a DAG
   // fprintf(f, "\ttimeline [\n");
@@ -355,8 +443,8 @@ void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
   assert(n % NUM_BOTTOM == 0);
   assert(n % sysconf(_SC_PAGESIZE) == 0);
 
-  PVector *c = pvector_update_n(pvs->head->current, (uint64_t)range, range, n);
-  Commit *h = pbvt_commit_create(c, pvs->head, NULL);
+  PVector *v = pvector_update_n(pvs->head->current, (uint64_t)range, range, n);
+  Commit *h = pbvt_commit_create(v, pvs->head, NULL);
   ht_insert(pvs->states, h->hash, h);
   pvs->head = h;
 
@@ -371,12 +459,13 @@ void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
     l->bytes = range + i;
   }
 
-  struct uffdio_register uffd_register = {};
-  uffd_register.range.start = (__u64)range;
-  uffd_register.range.len = n;
-  uffd_register.mode = UFFDIO_REGISTER_MODE_WP;
-  if (ioctl(uffd, UFFDIO_REGISTER, &uffd_register))
-    xperror("ioctl(uffd, UFFDIO_REGISTER)");
+  char c = MSG_REGISTER_RANGE;
+  write(pipefd[0], &c, 1);
+  write(pipefd[0], &range, sizeof(range));
+  write(pipefd[0], &n, sizeof(n));
+
+  read(pipefd[1], &c, 1);
+  assert(c == MSG_SUCCESS);
 
   for (size_t i = 0; i < n; i += 0x1000) {
     Range *r = calloc(1, sizeof(Range));
@@ -392,9 +481,9 @@ Commit *pbvt_commit(PVectorState *pvs, char *name) {
   Range *r;
 
   Commit *h = pvs->head;
-  PVector *t;
-  PVector *c = h->current;
-  c->refcount++;
+  PVector *u;
+  PVector *v = h->current;
+  v->refcount++;
 
   for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
     r = queue_peekleft(pvs->ranges, i);
@@ -402,11 +491,8 @@ Commit *pbvt_commit(PVectorState *pvs, char *name) {
       continue;
 
     // printf("Saving state for %p...\n", (void *)r->address);
-    t = pvector_update_n(c, (uint64_t)r->address, (uint8_t *)r->address,
+    u = pvector_update_n(v, (uint64_t)r->address, (uint8_t *)r->address,
                          r->len);
-    t->refcount--;
-    pvector_gc(c, MAX_DEPTH - 1);
-    c = t;
 
     PVectorLeaf *l;
     for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
@@ -420,15 +506,16 @@ Commit *pbvt_commit(PVectorState *pvs, char *name) {
     }
 
     pbvt_write_protect(r, 0);
+    pvector_gc(v, MAX_DEPTH - 1);
+    v = u;
   }
-
-  h = pbvt_commit_create(c, h, name);
+  h = pbvt_commit_create(v, h, name);
   ht_insert(pvs->states, h->hash, h);
   pvs->head = h;
   return h;
 }
 
-void pbvt_write_protect(Range *r, uint8_t dirty) {
+void pbvt_write_protect_internal(int uffd, Range *r, uint8_t dirty) {
   struct uffdio_writeprotect wp;
   wp.range.start = (uint64_t)r->address;
   wp.range.len = r->len;
@@ -445,6 +532,17 @@ void pbvt_write_protect(Range *r, uint8_t dirty) {
     xperror("ioctl(uffd, UFFDIO_WRITEPROTECT)");
 }
 
+void pbvt_write_protect(Range *r, uint8_t dirty) {
+  char c = MSG_WRITE_PROTECT;
+
+  write(pipefd[0], &c, 1);
+  write(pipefd[0], &r, sizeof(r));
+  write(pipefd[0], &dirty, sizeof(dirty));
+
+  read(pipefd[1], &c, 1);
+  assert(c == MSG_SUCCESS);
+}
+
 void pbvt_checkout(PVectorState *pvs, Commit *commit) {
   PVector *v = commit->current;
 
@@ -459,8 +557,8 @@ void pbvt_checkout(PVectorState *pvs, Commit *commit) {
         continue;
       free(UNTAG(l->bytes));
       l->bytes = (uint8_t *)r->address + i;
-      pbvt_write_protect(r, 0);
     }
+    pbvt_write_protect(r, 0);
   }
   pvs->head = commit;
 }
