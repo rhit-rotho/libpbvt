@@ -23,6 +23,11 @@
 #define BOTTOM_MASK ((1UL << BOTTOM_BITS) - 1)
 #define MAX_DEPTH (1 + (NUM_BITS - BOTTOM_BITS) / BITS_PER_LEVEL)
 
+// Make tagged pointers obviously invalid (crash on deref)
+#define TAG(x) ((uint8_t *)((uint64_t)(x) | (0xbadUL << 52)))
+#define UNTAG(x) ((uint8_t *)((uint64_t)(x) & ~(0xbadUL << 52)))
+#define TAGGED(x) ((uint64_t)(x) & (0xbadUL << 52))
+
 typedef struct PVector PVector;
 
 typedef struct PVector {

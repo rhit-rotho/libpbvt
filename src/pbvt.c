@@ -17,10 +17,6 @@
 #define STACK_SIZE (8 * 1024 * 1024)
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
-#define TAG(x) ((uint8_t *)((uint64_t)(x) | 1))
-#define UNTAG(x) ((uint8_t *)((uint64_t)(x) & ~1))
-#define TAGGED(x) (((uint64_t)(x)&1) == 1)
-
 #define MSG_HANDSHAKE (0x40)
 #define MSG_REGISTER_RANGE (0x41)
 #define MSG_WRITE_PROTECT (0x42)
@@ -33,13 +29,21 @@
     exit(-1);                                                                  \
   } while (0);
 
+typedef struct uffd_args {
+  PVectorState *pvs;
+  int infd;
+  int outfd;
+} uffd_args;
+
 int uffd_monitor(void *args) {
   struct pollfd pollfds[2];
   struct uffd_msg msg = {};
 
-  PVectorState *pvs = ((void **)args)[0];
-  int infd = ((void **)args)[1];
-  int outfd = ((void **)args)[2];
+  // Copy, since the stack frame containing the arguments to clone gets freed
+  // after our handshake
+  PVectorState *pvs = ((uffd_args *)args)->pvs;
+  int infd = ((uffd_args *)args)->infd;
+  int outfd = ((uffd_args *)args)->outfd;
 
   int uffd =
       syscall(SYS_userfaultfd, O_NONBLOCK | O_CLOEXEC | UFFD_USER_MODE_ONLY);
@@ -54,7 +58,7 @@ int uffd_monitor(void *args) {
 
   pollfds[0].fd = uffd;
   pollfds[0].events = POLLIN | POLLERR;
-  pollfds[1].fd = (int)((void **)args)[1];
+  pollfds[1].fd = infd;
   pollfds[1].events = POLLIN | POLLHUP | POLLNVAL;
 
   char c;
@@ -179,11 +183,11 @@ PVectorState *pbvt_init(void) {
   pipefd[0] = p2c[1];
   pipefd[1] = c2p[0];
 
-  void *args[3];
-  args[0] = pvs;
-  args[1] = (void *)p2c[0];
-  args[2] = (void *)c2p[1];
-  if (clone(uffd_monitor, clone_stk + STACK_SIZE, CLONE_VM, args) == -1)
+  uffd_args args;
+  args.pvs = pvs;
+  args.infd = (void *)p2c[0];
+  args.outfd = (void *)c2p[1];
+  if (clone(uffd_monitor, clone_stk + STACK_SIZE, CLONE_VM, &args) == -1)
     xperror("clone");
 
   char c = MSG_HANDSHAKE;
@@ -209,6 +213,7 @@ Commit *pbvt_commit_create(PVector *v, Commit *p, char *name) {
   Commit *c = calloc(1, sizeof(Commit));
 
   if (name) {
+    // TODO: Check commit with same name doesn't already exist
     size_t len = strlen(name);
     c->name = malloc(len + 1);
     strncpy(c->name, name, len + 1);
@@ -216,6 +221,8 @@ Commit *pbvt_commit_create(PVector *v, Commit *p, char *name) {
 
   uint64_t content[2] = {v->hash, p ? p->hash : 0UL};
   c->hash = fasthash64(content, sizeof(content), 0);
+  // No need to increment v's reference count, since our caller already has a
+  // reference to v.
   c->current = v;
   c->parent = p;
   return c;
@@ -253,20 +260,10 @@ void pbvt_cleanup(PVectorState *pvs) {
   free(ht_get(ht, 0UL));
   ht_remove(ht, 0UL);
 
-  for (size_t i = 0; i < ht->cap; ++i) {
-    HashBucket *bucket = &ht->buckets[i];
-    for (size_t j = 0; j < bucket->size; ++j) {
-      HashEntry *he = &bucket->entries[j];
-      PVector *v = he->value;
-      // if (v->level == MAX_DEPTH - 1)
-      //   printf("WARNING: Untraced item %.16lx %ld %ld\n", v->hash, v->level,
-      //          v->refcount);
-    }
-  }
+  // Free hashtable
   ht_free(ht);
 
-  // TODO: Make uffd_monitor responsible for managing pvs, and make these client
-  // stubs for message passing to another thread.
+  // TODO: Make these client stubs for message passing to another thread
   free(clone_stk);
   free(pvs);
 }
@@ -296,15 +293,6 @@ void pbvt_gc_n(PVectorState *pvs, size_t n) {
   }
   tail->parent = NULL;
   assert(t == n);
-}
-
-void pbvt_checkout_n(PVectorState *pvs, size_t depth) {
-  Commit *h = pvs->head;
-  for (size_t i = 0; i < depth; ++i) {
-    h = h->parent;
-    assert(h);
-  }
-  pbvt_checkout(pvs, h);
 }
 
 size_t pbvt_size(PVectorState *pvs) { return ht_size(pvs->states); }
@@ -402,7 +390,7 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
 void pbvt_debug(void) {
   printf("---------PBVT STATS---------\n");
   printf("NUM_BITS       = %d\n", NUM_BITS);
-  printf("MAX_INDEX      = %ld\n", MAX_INDEX);
+  printf("MAX_INDEX      = 0x%lx\n", MAX_INDEX);
   printf("NUM_CHILDREN   = %ld\n", NUM_CHILDREN);
   printf("BOTTOM_BITS    = %d\n", BOTTOM_BITS);
   printf("MAX_DEPTH      = %d\n", MAX_DEPTH);
@@ -490,7 +478,6 @@ Commit *pbvt_commit(PVectorState *pvs, char *name) {
     if (!r->dirty)
       continue;
 
-    // printf("Saving state for %p...\n", (void *)r->address);
     u = pvector_update_n(v, (uint64_t)r->address, (uint8_t *)r->address,
                          r->len);
 
@@ -543,14 +530,38 @@ void pbvt_write_protect(Range *r, uint8_t dirty) {
   assert(c == MSG_SUCCESS);
 }
 
+// TODO: Slow, could be a hash table indexed by commit->name
+Commit *pbvt_commit_by_name(PVectorState *pvs, char *name) {
+  for (size_t i = 0; i < pvs->states->cap; ++i) {
+    HashBucket *bucket = &pvs->states->buckets[i];
+    for (size_t j = 0; j < bucket->size; ++j) {
+      HashEntry *he = &bucket->entries[j];
+      Commit *c = he->value;
+      if (!c->name)
+        continue;
+      if (strcmp(name, c->name) == 0)
+        return c;
+    }
+  }
+  return NULL;
+}
+
+Commit *pbvt_commit_parent(PVectorState *pvs, Commit *commit) {
+  return commit->parent;
+}
+
+Commit *pbvt_head(PVectorState *pvs) { return pvs->head; }
+
 void pbvt_checkout(PVectorState *pvs, Commit *commit) {
   PVector *v = commit->current;
 
   // This puts us in a transient state
   for (size_t n = 0; n < queue_size(pvs->ranges); ++n) {
     Range *r = queue_peekleft(pvs->ranges, n);
+
     for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
       PVectorLeaf *l = pvector_get_leaf(v, (uint64_t)r->address + i);
+
       if (fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0) != l->hash)
         memcpy((uint8_t *)r->address + i, UNTAG(l->bytes), NUM_BOTTOM);
       if (!TAGGED(l->bytes))
@@ -558,6 +569,9 @@ void pbvt_checkout(PVectorState *pvs, Commit *commit) {
       free(UNTAG(l->bytes));
       l->bytes = (uint8_t *)r->address + i;
     }
+
+    // Get back out of transient state, we assume any page faults from the
+    // memcpy are resolved by uffd_monitor.
     pbvt_write_protect(r, 0);
   }
   pvs->head = commit;

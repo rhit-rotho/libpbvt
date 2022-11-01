@@ -37,11 +37,11 @@ size_t pbvt_size(PVectorState *pvs);
 void pbvt_print(PVectorState *pvs, char *path);
 void pbvt_track_range(PVectorState *pvs, void *range, size_t n);
 
-void pbvt_checkout_n(PVectorState *pvs, size_t depth);
 Commit *pbvt_commit(PVectorState *pvs, char *name);
 void pbvt_checkout(PVectorState *pvs, Commit *commit);
 Commit *pbvt_commit_by_name(PVectorState *pvs, char *name);
-Commit *pbvt_commit_parent(PVectorState *pvs, char *name);
+Commit *pbvt_commit_parent(PVectorState *pvs, Commit *name);
+Commit *pbvt_head(PVectorState *pvs);
 
 // private operations
 void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level);
@@ -53,4 +53,4 @@ Commit *pbvt_commit_create(PVector *v, Commit *p, char *name);
 void pbvt_commit_free(Commit *c);
 
 void pbvt_write_protect(Range *r, uint8_t);
-void pbvt_write_protect_internal(int uffd, Range *r, uint8_t dirty) ;
+void pbvt_write_protect_internal(int uffd, Range *r, uint8_t dirty);

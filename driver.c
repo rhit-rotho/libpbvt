@@ -30,6 +30,10 @@ int main(int argc, char **argv) {
   uint8_t *test =
       mmap((void *)0x10000UL, 0x10000, PROT_READ | PROT_WRITE,
            MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE | MAP_FIXED, -1, 0);
+  if (test == MAP_FAILED) {
+    perror("mmap");
+    return 1;
+  }
 
   // track changes
   printf("Adding range %p-%p...", test, test + 0x10000);
@@ -37,15 +41,29 @@ int main(int argc, char **argv) {
   printf("done\n");
 
   test[0] = 1;
-  pbvt_commit(pvs, NULL);
+  Commit *c1 = pbvt_commit(pvs, "initial");
   test[0] = 2;
   test[0] = 3;
-  pbvt_commit(pvs, NULL);
+  Commit *c2 = pbvt_commit(pvs, "my-commit");
   assert(test[0] == 3);
   test[0] = 4;
   // We didn't commit the previous change, so it gets discarded
-  pbvt_checkout_n(pvs, 1);
+
+  pbvt_checkout(pvs, c1);
   assert(test[0] == 1);
+
+  pbvt_checkout(pvs, c2);
+  assert(test[0] == 3);
+
+  test[0] = 5;
+  test[0] = 6;
+  pbvt_commit(pvs, "final");
+  pbvt_checkout(pvs, pbvt_commit_by_name(pvs, "initial"));
+  assert(test[0] == 1);
+  pbvt_checkout(pvs, pbvt_commit_by_name(pvs, "my-commit"));
+  assert(test[0] == 3);
+  pbvt_checkout(pvs, pbvt_commit_by_name(pvs, "final"));
+  assert(test[0] == 6);
 
   for (int i = 0; i < 0x100; ++i)
     test[i] = 0;
@@ -112,7 +130,7 @@ driver:
       break;
     case 'b':
       printf("Checkout one from head\n");
-      pbvt_checkout(pvs, 0);
+      pbvt_checkout(pvs, pbvt_commit_parent(pvs, pbvt_head(pvs)));
       break;
     default:
       printf("Unrecognized %c\n", buf[0]);

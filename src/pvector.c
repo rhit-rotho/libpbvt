@@ -7,10 +7,6 @@
 
 extern HashTable *ht;
 
-#define TAG(x) ((uint8_t *)((uint64_t)(x) | 1))
-#define UNTAG(x) ((uint8_t *)((uint64_t)(x) & ~1))
-#define TAGGED(x) (((uint64_t)(x)&1) == 1)
-
 // We can do this without cloning all the child nodes because our tree is
 // persistent; all operations on the data structure will clone any children as
 // necessary, so we can be lazy here.
