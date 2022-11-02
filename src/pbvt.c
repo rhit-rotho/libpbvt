@@ -16,6 +16,7 @@
 
 #define STACK_SIZE (8 * 1024 * 1024)
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define UNUSED(x) (void)(x)
 
 #define MSG_HANDSHAKE (0x40)
 #define MSG_REGISTER_RANGE (0x41)
@@ -185,8 +186,8 @@ PVectorState *pbvt_init(void) {
 
   uffd_args args;
   args.pvs = pvs;
-  args.infd = (void *)p2c[0];
-  args.outfd = (void *)c2p[1];
+  args.infd = p2c[0];
+  args.outfd = c2p[1];
   if (clone(uffd_monitor, clone_stk + STACK_SIZE, CLONE_VM, &args) == -1)
     xperror("clone");
 
@@ -547,6 +548,7 @@ Commit *pbvt_commit_by_name(PVectorState *pvs, char *name) {
 }
 
 Commit *pbvt_commit_parent(PVectorState *pvs, Commit *commit) {
+  UNUSED(pvs);
   return commit->parent;
 }
 
