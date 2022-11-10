@@ -41,13 +41,30 @@ int main(int argc, char **argv) {
   printf("done\n");
 
   test[0] = 1;
-  Commit *c1 = pbvt_commit(pvs, "initial");
+  Commit *c1 = pbvt_commit(pvs);
+  assert(test[0] == 1);
+  pbvt_checkout(pvs, c1);
+  assert(test[0] == 1);
   test[0] = 2;
   test[0] = 3;
-  Commit *c2 = pbvt_commit(pvs, "my-commit");
+  Commit *c2 = pbvt_commit(pvs);
   assert(test[0] == 3);
   test[0] = 4;
   // We didn't commit the previous change, so it gets discarded
+
+  pbvt_branch_commit(pvs, "main"); // c2 <- head
+  assert(strcmp(pvs->branch->name, "main") == 0);
+
+  test[0] = 5;
+  Commit *c3 = pbvt_commit(pvs); // c3 <- head
+  assert(strcmp(pvs->branch->name, "main") == 0);
+
+  pbvt_checkout(pvs, c1);
+  test[0] = 12;
+  pbvt_commit(pvs); // detached state
+  assert(test[0] == 12);
+
+  assert(pvs->branch == NULL);
 
   pbvt_checkout(pvs, c1);
   assert(test[0] == 1);
@@ -57,19 +74,17 @@ int main(int argc, char **argv) {
 
   test[0] = 5;
   test[0] = 6;
-  pbvt_commit(pvs, "final");
-  pbvt_checkout(pvs, pbvt_commit_by_name(pvs, "initial"));
-  assert(test[0] == 1);
-  pbvt_checkout(pvs, pbvt_commit_by_name(pvs, "my-commit"));
-  assert(test[0] == 3);
-  pbvt_checkout(pvs, pbvt_commit_by_name(pvs, "final"));
-  assert(test[0] == 6);
+  pbvt_branch_commit(pvs, "final");
+  // pbvt_branch_checkout(pvs, "main");
+  // assert(test[0] == 5);
 
-  for (int i = 0; i < 0x100; ++i)
-    test[i] = 0;
-  pbvt_commit(pvs, NULL);
+  // for (int i = 0; i < 0x100; ++i)
+  //   test[i] = 0;
+  // pbvt_commit(pvs);
 
   pbvt_print(pvs, "out.dot");
+
+  goto cleanup;
 
   for (int64_t i = 1; i < trials; ++i) {
     for (int i = 0; i < 0x100; ++i) {
@@ -78,7 +93,7 @@ int main(int argc, char **argv) {
       test[key] = val;
     }
     COZ_PROGRESS;
-    pbvt_commit(pvs, NULL);
+    pbvt_commit(pvs);
     COZ_PROGRESS;
     if (pbvt_size(pvs) > gc_threshold) {
       pbvt_gc_n(pvs, gc_threshold / 2);
@@ -117,7 +132,7 @@ driver:
       break;
     case 'c':
       printf("Committing...\n");
-      pbvt_commit(pvs, NULL);
+      pbvt_commit(pvs);
       break;
     case 't':
       pbuf += sscanf(pbuf, "%p %d", &idx, &val);

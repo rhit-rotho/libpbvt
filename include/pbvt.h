@@ -16,14 +16,19 @@ typedef struct Range {
 typedef struct Commit Commit;
 typedef struct Commit {
   uint64_t hash;
-  char *name;
   PVector *current;
   Commit *parent;
 } Commit;
 
+typedef struct Branch {
+  char *name;
+  Commit *head;
+} Branch;
+
 typedef struct PVectorState {
   Commit *head;
-  // Queue *heads;
+  Branch *branch;
+  HashTable *branches;
   HashTable *states;
   Queue *ranges;
 } PVectorState;
@@ -37,11 +42,14 @@ size_t pbvt_size(PVectorState *pvs);
 void pbvt_print(PVectorState *pvs, char *path);
 void pbvt_track_range(PVectorState *pvs, void *range, size_t n);
 
-Commit *pbvt_commit(PVectorState *pvs, char *name);
+Commit *pbvt_commit(PVectorState *pvs);
 void pbvt_checkout(PVectorState *pvs, Commit *commit);
-Commit *pbvt_commit_by_name(PVectorState *pvs, char *name);
-Commit *pbvt_commit_parent(PVectorState *pvs, Commit *name);
+
+Commit *pbvt_commit_parent(PVectorState *pvs, Commit *commit);
 Commit *pbvt_head(PVectorState *pvs);
+
+void pbvt_branch_commit(PVectorState *pvs, char *name);
+void pbvt_branch_checkout(PVectorState *pvs, char *name);
 
 // private operations
 void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level);
@@ -49,7 +57,7 @@ void pbvt_stats(PVectorState *pvs);
 void pbvt_debug(void);
 uint64_t pbvt_capacity(void);
 
-Commit *pbvt_commit_create(PVector *v, Commit *p, char *name);
+Commit *pbvt_commit_create(PVector *v, Commit *p);
 void pbvt_commit_free(Commit *c);
 
 void pbvt_write_protect(Range *r, uint8_t);

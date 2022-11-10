@@ -175,6 +175,7 @@ PVectorState *pbvt_init(void) {
   pvs->states = ht_create();
   // TODO: Replace with appropriate datastructure (hash table?)
   pvs->ranges = queue_create();
+  pvs->branches = ht_create();
   clone_stk = malloc(STACK_SIZE);
 
   int p2c[2];
@@ -200,7 +201,7 @@ PVectorState *pbvt_init(void) {
   PVector *v = calloc(1, MAX(sizeof(PVector), sizeof(PVectorLeaf)));
   v->hash = 0UL;
   v->refcount = 1;
-  Commit *h = pbvt_commit_create(v, NULL, NULL);
+  Commit *h = pbvt_commit_create(v, NULL);
   pvs->head = h;
   ht_insert(pvs->states, h->hash, h);
 
@@ -210,15 +211,8 @@ PVectorState *pbvt_init(void) {
   return pvs;
 }
 
-Commit *pbvt_commit_create(PVector *v, Commit *p, char *name) {
+Commit *pbvt_commit_create(PVector *v, Commit *p) {
   Commit *c = calloc(1, sizeof(Commit));
-
-  if (name) {
-    // TODO: Check commit with same name doesn't already exist
-    size_t len = strlen(name);
-    c->name = malloc(len + 1);
-    strncpy(c->name, name, len + 1);
-  }
 
   uint64_t content[2] = {v->hash, p ? p->hash : 0UL};
   c->hash = fasthash64(content, sizeof(content), 0);
@@ -231,7 +225,6 @@ Commit *pbvt_commit_create(PVector *v, Commit *p, char *name) {
 
 void pbvt_commit_free(Commit *c) {
   pvector_gc(c->current, MAX_DEPTH - 1);
-  free(c->name);
   free(c);
 }
 
@@ -304,9 +297,40 @@ void pbvt_print(PVectorState *pvs, char *path) {
   if (f == NULL)
     return;
   fprintf(f, "digraph {\n");
-  fprintf(f, "\tnode[shape=record];\n");
+  // fprintf(f, "\tnode[shape=record];\n");
 
   fprintf(f, "// %p\n", pvs);
+
+  // for(int i= 0; i < pvs->branches; ++i) {
+  fprintf(f, "\t\n");
+  // }
+
+  for (size_t i = 0; i < pvs->states->cap; ++i) {
+    HashBucket *bucket = &pvs->states->buckets[i];
+    for (size_t j = 0; j < bucket->size; ++j) {
+      HashEntry *he = &bucket->entries[j];
+      Commit *c = he->value;
+      // fprintf(f, "\tv%.16lx [\n", c->hash);
+      // if (pvs->head == c)
+      //   fprintf(f, "\t\tcolor=\"red\"");
+      // fprintf(f, "\t];\n");
+      if (c->parent)
+        fprintf(f, "\tv%.16lx -> v%.16lx;\n", c->hash, c->parent->hash);
+    }
+  }
+
+  for (size_t i = 0; i < pvs->branches->cap; ++i) {
+    HashBucket *bucket = &pvs->branches->buckets[i];
+    for (size_t j = 0; j < bucket->size; ++j) {
+      HashEntry *he = &bucket->entries[j];
+      Branch *b = he->value;
+      fprintf(f, "\tv%.16lx [\n", b->head->hash);
+      if (b->head == pvs->head)
+        fprintf(f, "\t\tcolor=\"red\"");
+      fprintf(f, "\t\tlabel=\"%s\"", b->name);
+      fprintf(f, "\t];\n");
+    }
+  }
 
   // TODO: This is now a DAG
   // fprintf(f, "\ttimeline [\n");
@@ -433,7 +457,7 @@ void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
   assert(n % sysconf(_SC_PAGESIZE) == 0);
 
   PVector *v = pvector_update_n(pvs->head->current, (uint64_t)range, range, n);
-  Commit *h = pbvt_commit_create(v, pvs->head, NULL);
+  Commit *h = pbvt_commit_create(v, pvs->head);
   ht_insert(pvs->states, h->hash, h);
   pvs->head = h;
 
@@ -465,10 +489,10 @@ void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
   }
 }
 
-// Similar logic to pvector_update_n
-Commit *pbvt_commit(PVectorState *pvs, char *name) {
+Commit *pbvt_commit(PVectorState *pvs) {
   Range *r;
 
+  Branch *cb = pvs->branch;
   Commit *h = pvs->head;
   PVector *u;
   PVector *v = h->current;
@@ -497,10 +521,35 @@ Commit *pbvt_commit(PVectorState *pvs, char *name) {
     pvector_gc(v, MAX_DEPTH - 1);
     v = u;
   }
-  h = pbvt_commit_create(v, h, name);
-  ht_insert(pvs->states, h->hash, h);
-  pvs->head = h;
-  return h;
+  Commit *nh = pbvt_commit_create(v, h);
+  ht_insert(pvs->states, nh->hash, nh);
+
+  // If we're already on a branch && we modified the current head of a branch,
+  // update the current head to our new commit, otherwise we're in a "detached"
+  // state, with no current branch
+  if (cb && h == cb->head)
+    cb->head = nh;
+  else
+    pvs->branch = NULL;
+  pvs->head = nh;
+  return nh;
+}
+
+void pbvt_branch_checkout(PVectorState *pvs, char *name) {
+  uint64_t key = fasthash64(name, strlen(name), 0);
+  Branch *b = ht_get(pvs->branches, key);
+  pbvt_checkout(pvs, b->head);
+  pvs->branch = b;
+}
+
+// Commit the current commit as "name"
+void pbvt_branch_commit(PVectorState *pvs, char *name) {
+  uint64_t key = fasthash64(name, strlen(name), 0);
+  Branch *b = calloc(1, sizeof(Branch));
+  b->head = pvs->head;
+  b->name = strdup(name);
+  pvs->branch = b;
+  ht_insert(pvs->branches, key, b);
 }
 
 void pbvt_write_protect_internal(int uffd, Range *r, uint8_t dirty) {
@@ -529,22 +578,6 @@ void pbvt_write_protect(Range *r, uint8_t dirty) {
 
   read(pipefd[1], &c, 1);
   assert(c == MSG_SUCCESS);
-}
-
-// TODO: Slow, could be a hash table indexed by commit->name
-Commit *pbvt_commit_by_name(PVectorState *pvs, char *name) {
-  for (size_t i = 0; i < pvs->states->cap; ++i) {
-    HashBucket *bucket = &pvs->states->buckets[i];
-    for (size_t j = 0; j < bucket->size; ++j) {
-      HashEntry *he = &bucket->entries[j];
-      Commit *c = he->value;
-      if (!c->name)
-        continue;
-      if (strcmp(name, c->name) == 0)
-        return c;
-    }
-  }
-  return NULL;
 }
 
 Commit *pbvt_commit_parent(PVectorState *pvs, Commit *commit) {
@@ -577,4 +610,6 @@ void pbvt_checkout(PVectorState *pvs, Commit *commit) {
     pbvt_write_protect(r, 0);
   }
   pvs->head = commit;
+
+  // TODO: Check to see if this commit was the head of any branch(?)
 }
