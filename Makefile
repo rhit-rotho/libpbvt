@@ -210,3 +210,6 @@ all: $(PROGRAM)
 
 clean:
 	$(RM) $(OBJS) $(PROGRAM)
+
+install: $(PROGRAM)
+	cp libpbvt.so /usr/local/lib/libpbvt.so
