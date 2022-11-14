@@ -2,6 +2,7 @@
 #include <coz.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -27,17 +28,20 @@ int main(int argc, char **argv) {
   uint64_t max_index = pbvt_capacity();
   pbvt_debug();
 
-  uint8_t *test =
-      mmap((void *)0x10000UL, 0x10000, PROT_READ | PROT_WRITE,
-           MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE | MAP_FIXED, -1, 0);
+  size_t test_sz = 0x1000;
+  uint8_t *test = mmap((void *)0x10000UL, test_sz, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
   if (test == MAP_FAILED) {
     perror("mmap");
     return 1;
   }
 
+  for (int i = 0; i < test_sz; ++i)
+    test[i] = i & 0xf;
+
   // track changes
-  printf("Adding range %p-%p...", test, test + 0x10000);
-  pbvt_track_range(pvs, test, 0x10000);
+  printf("Adding range %p-%p...", test, test + test_sz);
+  pbvt_track_range(pvs, test, test_sz);
   printf("done\n");
 
   test[0] = 1;

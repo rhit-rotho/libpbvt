@@ -14,8 +14,11 @@
 #include "fasthash.h"
 #include "pbvt.h"
 
+#define MIN(x, y) ((x) > (y) ? (y) : (x))
+#define MAX(x, y) ((x) > (y) ? (x) : (y))
+#define CLAMP(x, a, b) MIN(MAX(x, a), b)
+
 #define STACK_SIZE (8 * 1024 * 1024)
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define UNUSED(x) (void)(x)
 
 #define MSG_HANDSHAKE (0x40)
@@ -176,7 +179,8 @@ PVectorState *pbvt_init(void) {
   // TODO: Replace with appropriate datastructure (hash table?)
   pvs->ranges = queue_create();
   pvs->branches = ht_create();
-  clone_stk = malloc(STACK_SIZE);
+  clone_stk = mmap(NULL, STACK_SIZE, PROT_READ | PROT_WRITE,
+                   MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 
   int p2c[2];
   int c2p[2];
@@ -342,31 +346,36 @@ void pbvt_print(PVectorState *pvs, char *path) {
   fprintf(f, "\t\tlabel = \"");
   fprintf(f, "{<timeline>timeline|{");
   Commit *h = pvs->head;
-  uint64_t i = 0;
+  Queue *q = queue_create();
   while (h) {
-    fprintf(f, "<%ld>%.16lx", i, h->hash);
-    if (h->parent)
-      fprintf(f, "|");
+    queue_push(q, h);
     h = h->parent;
-    i += 1;
   }
+
+  for (size_t j = 1; j < queue_size(q); ++j) {
+    h = queue_peekright(q, j);
+    fprintf(f, "<%ld>%.16lx", j, h->hash);
+    if (j != queue_size(q) - 1)
+      fprintf(f, "|");
+  }
+
   fprintf(f, "}}");
   fprintf(f, "\";\n");
       fprintf(f, "\t];\n");
 
-  h = pvs->head;
-  i = 0;
-  while (h) {
-    fprintf(f, "\ttimeline:%ld -> v%.16lx;\n", i, h->current->hash);
+  for (size_t j = 1; j < queue_size(q); ++j) {
+    h = queue_peekright(q, j);
+    fprintf(f, "\ttimeline:%ld -> v%.16lx:n;\n", j, h->current->hash);
     h = h->parent;
-    i += 1;
   }
 
-  h = pvs->head;
-  while (h) {
+  for (size_t j = 1; j < queue_size(q); ++j) {
+    h = queue_peekright(q, j);
     pbvt_print_node(f, pr, h->current, MAX_DEPTH - 1);
     h = h->parent;
   }
+
+  queue_free(q);
 
   // for (size_t i = 0, n = queue_size(pvs->states); i < n; ++i)
   //   pbvt_print_node(f, pr, (PVector *)queue_peekleft(pvs->states, i),
@@ -384,12 +393,17 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
 
   size_t tlen = ftell(f);
   fprintf(f, "\tv%.16lx [\n", v->hash);
+  fprintf(f, "\t\tcolorscheme = \"blues5\";\n");
+  fprintf(f, "\t\tstyle = filled\n");
+  fprintf(f, "\t\tfillcolor = %ld;\n", CLAMP(v->refcount, 1, 5));
+
   fprintf(f, "\t\tlabel = \"");
   if (level > 0) {
-    fprintf(f, "{<head>%.16lx (%ld refs)|{", v->hash, v->refcount);
+    // fprintf(f, "{<head>%.2lx (%ld refs)|{", v->hash & 0xff, v->refcount);
+    fprintf(f, "{{");
     for (size_t i = 0; i < NUM_CHILDREN; ++i) {
       if (v->children[i])
-        fprintf(f, "<%ld>%.16lx", i, v->children[i]);
+        fprintf(f, "<%ld>", i);
       else
         fprintf(f, "<%ld>x", i);
       if (i != NUM_CHILDREN - 1)
@@ -401,8 +415,10 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
     }
   } else {
     PVectorLeaf *l = (PVectorLeaf *)v;
-    fprintf(f, "{<head>%.16lx (%ld refs) %p[%ld]|{", v->hash, v->refcount,
-            UNTAG(l->bytes), NUM_BOTTOM);
+    // fprintf(f, "{<head>%.2lx (%ld refs) %p[%ld]|{", v->hash & 0xff,
+    // v->refcount,
+    //         UNTAG(l->bytes), NUM_BOTTOM);
+    fprintf(f, "{{");
     for (size_t i = 0; i < NUM_BOTTOM; ++i) {
       fprintf(f, "<%ld>%.2x", i, UNTAG((l->bytes))[i]);
       if (i != NUM_BOTTOM - 1)
@@ -423,7 +439,7 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
 
   for (size_t i = 0; i < NUM_CHILDREN; ++i) {
     if (v->children[i]) {
-      fprintf(f, "\tv%.16lx:%ld -> v%.16lx;\n", v->hash, i, v->children[i]);
+      fprintf(f, "\tv%.16lx:%ld -> v%.16lx:n;\n", v->hash, i, v->children[i]);
       pbvt_print_node(f, pr, ht_get(ht, v->children[i]), level - 1);
     }
   }
