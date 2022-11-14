@@ -2,9 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// TODO: We don't need all of malloc's functionality, a bump allocator would
-// probably work just fine (this may or may not be necessary for performance).
-
 // For 4-level paging (see "Paging" in Volume 3 of the Intel 64 and IA-32
 // Architectures Software Developer's manual)
 #define NUM_BITS (48)

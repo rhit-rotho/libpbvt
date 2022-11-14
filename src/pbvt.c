@@ -8,10 +8,12 @@
 #include <sched.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
 #include "fasthash.h"
+#include "memory.h"
 #include "pbvt.h"
 
 #define MIN(x, y) ((x) > (y) ? (y) : (x))
@@ -150,7 +152,7 @@ int uffd_monitor(void *args) {
           // by writes to this page
           void *arrp = UNTAG(l->bytes);
           if (r->address <= arrp && arrp < r->address + r->len) {
-            uint8_t *back = calloc(NUM_BOTTOM, sizeof(uint8_t));
+            uint8_t *back = memory_calloc(NUM_BOTTOM, sizeof(uint8_t));
             memcpy(back, arrp, NUM_BOTTOM);
             l->bytes = TAG(back);
           }
@@ -174,7 +176,7 @@ cleanup:
 void *clone_stk;
 int pipefd[2];
 PVectorState *pbvt_init(void) {
-  PVectorState *pvs = calloc(1, sizeof(PVectorState));
+  PVectorState *pvs = memory_calloc(1, sizeof(PVectorState));
   pvs->states = ht_create();
   // TODO: Replace with appropriate datastructure (hash table?)
   pvs->ranges = queue_create();
@@ -202,7 +204,7 @@ PVectorState *pbvt_init(void) {
   assert(c == MSG_SUCCESS);
 
   // Create our null node ("null object" pattern if you like OOP)
-  PVector *v = calloc(1, MAX(sizeof(PVector), sizeof(PVectorLeaf)));
+  PVector *v = memory_calloc(1, MAX(sizeof(PVector), sizeof(PVectorLeaf)));
   v->hash = 0UL;
   v->refcount = 1;
   Commit *h = pbvt_commit_create(v, NULL);
@@ -216,7 +218,7 @@ PVectorState *pbvt_init(void) {
 }
 
 Commit *pbvt_commit_create(PVector *v, Commit *p) {
-  Commit *c = calloc(1, sizeof(Commit));
+  Commit *c = memory_calloc(1, sizeof(Commit));
 
   uint64_t content[2] = {v->hash, p ? p->hash : 0UL};
   c->hash = fasthash64(content, sizeof(content), 0);
@@ -229,7 +231,7 @@ Commit *pbvt_commit_create(PVector *v, Commit *p) {
 
 void pbvt_commit_free(Commit *c) {
   pvector_gc(c->current, MAX_DEPTH - 1);
-  free(c);
+  memory_free(c);
 }
 
 void pbvt_cleanup(PVectorState *pvs) {
@@ -250,20 +252,20 @@ void pbvt_cleanup(PVectorState *pvs) {
 
   // Free ranges
   while (queue_size(pvs->ranges) > 0)
-    free(queue_popleft(pvs->ranges));
+    memory_free(queue_popleft(pvs->ranges));
   queue_free(pvs->ranges);
 
   // Free null node
-  free(UNTAG(((PVectorLeaf *)ht_get(ht, 0UL))->bytes));
-  free(ht_get(ht, 0UL));
+  memory_free(UNTAG(((PVectorLeaf *)ht_get(ht, 0UL))->bytes));
+  memory_free(ht_get(ht, 0UL));
   ht_remove(ht, 0UL);
 
   // Free hashtable
   ht_free(ht);
 
   // TODO: Make these client stubs for message passing to another thread
-  free(clone_stk);
-  free(pvs);
+  munmap(clone_stk, STACK_SIZE);
+  memory_free(pvs);
 }
 
 void pbvt_gc_n(PVectorState *pvs, size_t n) {
@@ -361,7 +363,7 @@ void pbvt_print(PVectorState *pvs, char *path) {
 
   fprintf(f, "}}");
   fprintf(f, "\";\n");
-      fprintf(f, "\t];\n");
+  fprintf(f, "\t];\n");
 
   for (size_t j = 1; j < queue_size(q); ++j) {
     h = queue_peekright(q, j);
@@ -501,7 +503,7 @@ void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
     // represents? If not, we can make it so and save some space
     if (!TAGGED(l->bytes))
       continue;
-    free(UNTAG(l->bytes));
+    memory_free(UNTAG(l->bytes));
     l->bytes = range + i;
   }
 
@@ -514,7 +516,7 @@ void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
   assert(c == MSG_SUCCESS);
 
   for (size_t i = 0; i < n; i += 0x1000) {
-    Range *r = calloc(1, sizeof(Range));
+    Range *r = memory_calloc(1, sizeof(Range));
     r->address = range + i;
     r->len = 0x1000;
     pbvt_write_protect(r, 0);
@@ -546,7 +548,7 @@ Commit *pbvt_commit(PVectorState *pvs) {
       // represents? If not, we can make it so and save some space
       if (!TAGGED(l->bytes))
         continue;
-      free(UNTAG(l->bytes));
+      memory_free(UNTAG(l->bytes));
       l->bytes = (uint8_t *)r->address + i;
     }
 
@@ -578,7 +580,7 @@ void pbvt_branch_checkout(PVectorState *pvs, char *name) {
 // Commit the current commit as "name"
 void pbvt_branch_commit(PVectorState *pvs, char *name) {
   uint64_t key = fasthash64(name, strlen(name), 0);
-  Branch *b = calloc(1, sizeof(Branch));
+  Branch *b = memory_calloc(1, sizeof(Branch));
   b->head = pvs->head;
   b->name = strdup(name);
   pvs->branch = b;
@@ -634,7 +636,7 @@ void pbvt_checkout(PVectorState *pvs, Commit *commit) {
         memcpy((uint8_t *)r->address + i, UNTAG(l->bytes), NUM_BOTTOM);
       if (!TAGGED(l->bytes))
         continue;
-      free(UNTAG(l->bytes));
+      memory_free(UNTAG(l->bytes));
       l->bytes = (uint8_t *)r->address + i;
     }
 
