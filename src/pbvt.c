@@ -297,7 +297,7 @@ void pbvt_print(PVectorState *pvs, char *path) {
   if (f == NULL)
     return;
   fprintf(f, "digraph {\n");
-  // fprintf(f, "\tnode[shape=record];\n");
+  fprintf(f, "\tnode[shape=record];\n");
 
   fprintf(f, "// %p\n", pvs);
 
@@ -305,51 +305,68 @@ void pbvt_print(PVectorState *pvs, char *path) {
   fprintf(f, "\t\n");
   // }
 
-  for (size_t i = 0; i < pvs->states->cap; ++i) {
-    HashBucket *bucket = &pvs->states->buckets[i];
-    for (size_t j = 0; j < bucket->size; ++j) {
-      HashEntry *he = &bucket->entries[j];
-      Commit *c = he->value;
-      // fprintf(f, "\tv%.16lx [\n", c->hash);
-      // if (pvs->head == c)
-      //   fprintf(f, "\t\tcolor=\"red\"");
-      // fprintf(f, "\t];\n");
-      if (c->parent)
-        fprintf(f, "\tv%.16lx -> v%.16lx;\n", c->hash, c->parent->hash);
-    }
-  }
+  // HashTable *heads = ht_create();
+  // for (size_t i = 0; i < pvs->branches->cap; ++i) {
+  //   HashBucket *bucket = &pvs->branches->buckets[i];
+  //   for (size_t j = 0; j < bucket->size; ++j) {
+  //     HashEntry *he = &bucket->entries[j];
+  //     Branch *b = he->value;
+  //     fprintf(f, "\tv%.16lx [\n", b->head->hash);
+  //     if (b->head == pvs->head)
+  //       fprintf(f, "\t\tcolor=\"red\"");
+  //     fprintf(f, "\t\tlabel=\"%s\"", b->name);
+  //     fprintf(f, "\t];\n");
+  //     ht_insert(heads, b->head->hash, b->head);
+  //   }
+  // }
 
-  for (size_t i = 0; i < pvs->branches->cap; ++i) {
-    HashBucket *bucket = &pvs->branches->buckets[i];
-    for (size_t j = 0; j < bucket->size; ++j) {
-      HashEntry *he = &bucket->entries[j];
-      Branch *b = he->value;
-      fprintf(f, "\tv%.16lx [\n", b->head->hash);
-      if (b->head == pvs->head)
-        fprintf(f, "\t\tcolor=\"red\"");
-      fprintf(f, "\t\tlabel=\"%s\"", b->name);
+  // for (size_t i = 0; i < pvs->states->cap; ++i) {
+  //   HashBucket *bucket = &pvs->states->buckets[i];
+  //   for (size_t j = 0; j < bucket->size; ++j) {
+  //     HashEntry *he = &bucket->entries[j];
+  //     Commit *c = he->value;
+  //     if (c->parent)
+  //       fprintf(f, "\tv%.16lx -> v%.16lx;\n", c->hash, c->parent->hash);
+  //     if (ht_get(heads, c->hash))
+  //       continue;
+  //     fprintf(f, "\tv%.16lx [\n", c->hash);
+  //     fprintf(f, "\t\tcolor=\"red\"");
+  //     fprintf(f, "\t\tlabel=\"v%.2lx\"", c->hash & 0xff);
+  //     fprintf(f, "\t];\n");
+  //   }
+  // }
+
+  // ht_free(heads);
+
+  fprintf(f, "\ttimeline [\n");
+  fprintf(f, "\t\tlabel = \"");
+  fprintf(f, "{<timeline>timeline|{");
+  Commit *h = pvs->head;
+  uint64_t i = 0;
+  while (h) {
+    fprintf(f, "<%ld>%.16lx", i, h->hash);
+    if (h->parent)
+      fprintf(f, "|");
+    h = h->parent;
+    i += 1;
+  }
+  fprintf(f, "}}");
+  fprintf(f, "\";\n");
       fprintf(f, "\t];\n");
-    }
+
+  h = pvs->head;
+  i = 0;
+  while (h) {
+    fprintf(f, "\ttimeline:%ld -> v%.16lx;\n", i, h->current->hash);
+    h = h->parent;
+    i += 1;
   }
 
-  // TODO: This is now a DAG
-  // fprintf(f, "\ttimeline [\n");
-  // fprintf(f, "\t\tlabel = \"");
-  // fprintf(f, "{<timeline>timeline|{");
-  // for (size_t i = 0, n = ht_size(pvs->states); i < n; ++i) {
-  //   fprintf(f, "<%ld>%.16lx", i,
-  //           ((PVector *)ht_size(pvs->states, i))->hash);
-  //   if (i != n - 1)
-  //     fprintf(f, "|");
-  // }
-  // fprintf(f, "}}");
-  // fprintf(f, "\";\n");
-  // fprintf(f, "\t];\n");
-
-  // for (size_t i = 0, n = ht_size(pvs->states); i < n; ++i) {
-  //   fprintf(f, "\ttimeline:%ld -> v%.16lx;\n", i,
-  //           ((PVector *)ht_size(pvs->states, i))->hash);
-  // }
+  h = pvs->head;
+  while (h) {
+    pbvt_print_node(f, pr, h->current, MAX_DEPTH - 1);
+    h = h->parent;
+  }
 
   // for (size_t i = 0, n = queue_size(pvs->states); i < n; ++i)
   //   pbvt_print_node(f, pr, (PVector *)queue_peekleft(pvs->states, i),
