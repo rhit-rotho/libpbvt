@@ -21,6 +21,7 @@
 #define CLAMP(x, a, b) MIN(MAX(x, a), b)
 
 #define STACK_SIZE (8 * 1024 * 1024)
+#define HEAP_SIZE (0x1000)
 #define UNUSED(x) (void)(x)
 
 #define MSG_HANDSHAKE (0x40)
@@ -150,7 +151,7 @@ int uffd_monitor(void *args) {
           // by writes to this page
           void *arrp = UNTAG(l->bytes);
           if (r->address <= arrp && arrp < r->address + r->len) {
-            uint8_t *back = memory_calloc(NUM_BOTTOM, sizeof(uint8_t));
+            uint8_t *back = memory_calloc(NULL, NUM_BOTTOM, sizeof(uint8_t));
             memcpy(back, arrp, NUM_BOTTOM);
             l->bytes = TAG(back);
           }
@@ -173,8 +174,11 @@ cleanup:
 
 void *clone_stk;
 int pipefd[2];
-PVectorState *pbvt_init(void) {
-  PVectorState *pvs = memory_calloc(1, sizeof(PVectorState));
+MallocState *persistent_heap;
+PVectorState *pvs;
+
+void pbvt_init(void) {
+  pvs = memory_calloc(NULL, 1, sizeof(PVectorState));
   pvs->states = ht_create();
   // TODO: Replace with appropriate datastructure (hash table?)
   pvs->ranges = queue_create();
@@ -202,7 +206,8 @@ PVectorState *pbvt_init(void) {
   assert(c == MSG_SUCCESS);
 
   // Create our null node ("null object" pattern if you like OOP)
-  PVector *v = memory_calloc(1, MAX(sizeof(PVector), sizeof(PVectorLeaf)));
+  PVector *v =
+      memory_calloc(NULL, 1, MAX(sizeof(PVector), sizeof(PVectorLeaf)));
   v->hash = 0UL;
   v->refcount = 1;
   Commit *h = pbvt_commit_create(v, NULL);
@@ -212,11 +217,19 @@ PVectorState *pbvt_init(void) {
   // Create table for hashconsing ("flyweight pattern" if you like OOP)
   ht = ht_create();
   ht_insert(ht, 0UL, v);
-  return pvs;
+
+  // Create a persistent heap (for use in pbvt_malloc, pbvt_free, ...)
+  assert(sizeof(MallocState) < HEAP_SIZE);
+  persistent_heap = mmap(NULL, HEAP_SIZE, PROT_READ | PROT_WRITE,
+                         MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+  if (persistent_heap == MAP_FAILED)
+    xperror("mmap");
+  pbvt_track_range(persistent_heap, HEAP_SIZE);
+  return;
 }
 
 Commit *pbvt_commit_create(PVector *v, Commit *p) {
-  Commit *c = memory_calloc(1, sizeof(Commit));
+  Commit *c = memory_calloc(NULL, 1, sizeof(Commit));
 
   uint64_t content[2] = {v->hash, p ? p->hash : 0UL};
   c->hash = fasthash64(content, sizeof(content), 0);
@@ -229,10 +242,10 @@ Commit *pbvt_commit_create(PVector *v, Commit *p) {
 
 void pbvt_commit_free(Commit *c) {
   pvector_gc(c->current, MAX_DEPTH - 1);
-  memory_free(c);
+  memory_free(NULL, c);
 }
 
-void pbvt_cleanup(PVectorState *pvs) {
+void pbvt_cleanup() {
   char c = MSG_SHUTDOWN;
   write(pipefd[0], &c, 1);
   read(pipefd[1], &c, 1);
@@ -260,12 +273,12 @@ void pbvt_cleanup(PVectorState *pvs) {
 
   // Free ranges
   while (queue_size(pvs->ranges) > 0)
-    memory_free(queue_popleft(pvs->ranges));
+    memory_free(NULL, queue_popleft(pvs->ranges));
   queue_free(pvs->ranges);
 
   // Free null node
-  memory_free(UNTAG(((PVectorLeaf *)ht_get(ht, 0UL))->bytes));
-  memory_free(ht_get(ht, 0UL));
+  memory_free(NULL, UNTAG(((PVectorLeaf *)ht_get(ht, 0UL))->bytes));
+  memory_free(NULL, ht_get(ht, 0UL));
   ht_remove(ht, 0UL);
 
   // Free hashtable
@@ -273,11 +286,15 @@ void pbvt_cleanup(PVectorState *pvs) {
 
   // TODO: Make these client stubs for message passing to another thread
   munmap(clone_stk, STACK_SIZE);
-  memory_free(pvs);
-  print_malloc_stats();
+  // printf("--- Persistent heap ---\n");
+  // print_malloc_stats(persistent_heap);
+  // printf("-----------------------\n");
+  munmap(persistent_heap, HEAP_SIZE);
+  memory_free(NULL, pvs);
+  // print_malloc_stats(NULL);
 }
 
-void pbvt_gc_n(PVectorState *pvs, size_t n) {
+void pbvt_gc_n(size_t n) {
   size_t len = 0;
   Commit *h = pvs->head;
   while (h) {
@@ -304,9 +321,9 @@ void pbvt_gc_n(PVectorState *pvs, size_t n) {
   assert(t == n);
 }
 
-size_t pbvt_size(PVectorState *pvs) { return ht_size(pvs->states); }
+size_t pbvt_size() { return ht_size(pvs->states); }
 
-void pbvt_print(PVectorState *pvs, char *path) {
+void pbvt_print(char *path) {
   HashTable *pr = ht_create();
   FILE *f = fopen(path, "w");
   if (f == NULL)
@@ -469,7 +486,7 @@ void pbvt_debug(void) {
   printf("CHILD_MASK     = %ld\n", CHILD_MASK);
 }
 
-void pbvt_stats(PVectorState *pvs) {
+void pbvt_stats() {
   printf("Tracked states: %ld\n", ht_size(pvs->states));
   printf("Number of nodes: %ld\n", ht_size(ht));
   printf("Theoretical max: 0x%lx\n", MAX_INDEX);
@@ -491,12 +508,12 @@ void pbvt_stats(PVectorState *pvs) {
   //   printf("Estimated reduction in overhead (overestimate): %f%%\n",
   //          100.0 * ((float)overhead - full_copy_sz) / full_copy_sz);
 
-  print_malloc_stats();
+  print_malloc_stats(NULL);
 }
 
 uint64_t pbvt_capacity(void) { return MAX_INDEX; }
 
-void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
+void pbvt_track_range(void *range, size_t n) {
   // TODO: Zero-pad, handle this correctly
   assert((uint64_t)range % sysconf(_SC_PAGESIZE) == 0);
   assert(n % NUM_BOTTOM == 0);
@@ -514,7 +531,7 @@ void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
     // represents? If not, we can make it so and save some space
     if (!TAGGED(l->bytes))
       continue;
-    memory_free(UNTAG(l->bytes));
+    memory_free(NULL, UNTAG(l->bytes));
     l->bytes = range + i;
   }
 
@@ -527,7 +544,7 @@ void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
   assert(c == MSG_SUCCESS);
 
   for (size_t i = 0; i < n; i += 0x1000) {
-    Range *r = memory_calloc(1, sizeof(Range));
+    Range *r = memory_calloc(NULL, 1, sizeof(Range));
     r->address = range + i;
     r->len = 0x1000;
     pbvt_write_protect(r, 0);
@@ -535,7 +552,7 @@ void pbvt_track_range(PVectorState *pvs, void *range, size_t n) {
   }
 }
 
-Commit *pbvt_commit(PVectorState *pvs) {
+Commit *pbvt_commit() {
   Range *r;
 
   Branch *cb = pvs->branch;
@@ -559,7 +576,7 @@ Commit *pbvt_commit(PVectorState *pvs) {
       // represents? If not, we can make it so and save some space
       if (!TAGGED(l->bytes))
         continue;
-      memory_free(UNTAG(l->bytes));
+      memory_free(NULL, UNTAG(l->bytes));
       l->bytes = (uint8_t *)r->address + i;
     }
 
@@ -581,17 +598,17 @@ Commit *pbvt_commit(PVectorState *pvs) {
   return nh;
 }
 
-void pbvt_branch_checkout(PVectorState *pvs, char *name) {
+void pbvt_branch_checkout(char *name) {
   uint64_t key = fasthash64(name, strlen(name), 0);
   Branch *b = ht_get(pvs->branches, key);
-  pbvt_checkout(pvs, b->head);
+  pbvt_checkout(b->head);
   pvs->branch = b;
 }
 
 // Commit the current commit as "name"
-void pbvt_branch_commit(PVectorState *pvs, char *name) {
+void pbvt_branch_commit(char *name) {
   uint64_t key = fasthash64(name, strlen(name), 0);
-  Branch *b = memory_calloc(1, sizeof(Branch));
+  Branch *b = memory_calloc(NULL, 1, sizeof(Branch));
   b->head = pvs->head;
   b->name = strdup(name);
   pvs->branch = b;
@@ -626,14 +643,14 @@ void pbvt_write_protect(Range *r, uint8_t dirty) {
   assert(c == MSG_SUCCESS);
 }
 
-Commit *pbvt_commit_parent(PVectorState *pvs, Commit *commit) {
+Commit *pbvt_commit_parent(Commit *commit) {
   UNUSED(pvs);
   return commit->parent;
 }
 
-Commit *pbvt_head(PVectorState *pvs) { return pvs->head; }
+Commit *pbvt_head() { return pvs->head; }
 
-void pbvt_checkout(PVectorState *pvs, Commit *commit) {
+void pbvt_checkout(Commit *commit) {
   PVector *v = commit->current;
 
   // This puts us in a transient state
@@ -642,12 +659,14 @@ void pbvt_checkout(PVectorState *pvs, Commit *commit) {
 
     for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
       PVectorLeaf *l = pvector_get_leaf(v, (uint64_t)r->address + i);
+      if (!l)
+        continue;
 
       if (fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0) != l->hash)
         memcpy((uint8_t *)r->address + i, UNTAG(l->bytes), NUM_BOTTOM);
       if (!TAGGED(l->bytes))
         continue;
-      memory_free(UNTAG(l->bytes));
+      memory_free(NULL, UNTAG(l->bytes));
       l->bytes = (uint8_t *)r->address + i;
     }
 
@@ -659,3 +678,12 @@ void pbvt_checkout(PVectorState *pvs, Commit *commit) {
 
   // TODO: Check to see if this commit was the head of any branch(?)
 }
+
+void *pbvt_calloc(size_t nmemb, size_t size) {
+  return memory_calloc(persistent_heap, nmemb, size);
+}
+void *pbvt_realloc(void *ptr, size_t size) {
+  return memory_realloc(persistent_heap, ptr, size);
+}
+void *pbvt_malloc(size_t size) { return memory_malloc(persistent_heap, size); }
+void pbvt_free(void *ptr) { return memory_free(persistent_heap, ptr); }

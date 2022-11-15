@@ -34,28 +34,34 @@ typedef struct PVectorState {
 } PVectorState;
 
 // public operations
-PVectorState *pbvt_init(void);
-void pbvt_cleanup(PVectorState *pvs);
-void pbvt_gc_n(PVectorState *pvs, size_t n);
-size_t pbvt_size(PVectorState *pvs);
+void pbvt_init(void);
+void pbvt_cleanup();
+void pbvt_gc_n(size_t n);
+size_t pbvt_size();
 
-void pbvt_print(PVectorState *pvs, char *path);
-void pbvt_track_range(PVectorState *pvs, void *range, size_t n);
+void pbvt_print(char *path);
+void pbvt_track_range(void *range, size_t n);
 
-Commit *pbvt_commit(PVectorState *pvs);
-void pbvt_checkout(PVectorState *pvs, Commit *commit);
+Commit *pbvt_commit();
+void pbvt_checkout(Commit *commit);
 
-Commit *pbvt_commit_parent(PVectorState *pvs, Commit *commit);
-Commit *pbvt_head(PVectorState *pvs);
+Commit *pbvt_commit_parent(Commit *commit);
+Commit *pbvt_head();
 
-void pbvt_branch_commit(PVectorState *pvs, char *name);
-void pbvt_branch_checkout(PVectorState *pvs, char *name);
+void pbvt_branch_commit(char *name);
+void pbvt_branch_checkout(char *name);
+
+uint64_t pbvt_capacity(void);
+
+void *pbvt_calloc(size_t nmemb, size_t size);
+void *pbvt_realloc(void *ptr, size_t size);
+void *pbvt_malloc(size_t size);
+void pbvt_free(void *ptr);
 
 // private operations
 void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level);
-void pbvt_stats(PVectorState *pvs);
+void pbvt_stats();
 void pbvt_debug(void);
-uint64_t pbvt_capacity(void);
 
 Commit *pbvt_commit_create(PVector *v, Commit *p);
 void pbvt_commit_free(Commit *c);

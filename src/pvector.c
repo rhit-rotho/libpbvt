@@ -12,17 +12,17 @@ extern HashTable *ht;
 // persistent; all operations on the data structure will clone any children as
 // necessary, so we can be lazy here.
 PVectorLeaf *pvector_clone_leaf(PVectorLeaf *l) {
-  PVectorLeaf *u = memory_calloc(1, sizeof(PVectorLeaf));
+  PVectorLeaf *u = memory_calloc(NULL, 1, sizeof(PVectorLeaf));
   u->refcount = 0;
   // u->level = 0;
-  u->bytes = TAG(memory_calloc(NUM_BOTTOM, sizeof(uint8_t)));
+  u->bytes = TAG(memory_calloc(NULL, NUM_BOTTOM, sizeof(uint8_t)));
   if (UNTAG(l->bytes))
     memcpy(UNTAG(u->bytes), UNTAG(l->bytes), NUM_BOTTOM);
   return u;
 }
 
 PVector *pvector_clone(PVector *v) {
-  PVector *u = memory_calloc(1, sizeof(PVector));
+  PVector *u = memory_calloc(NULL, 1, sizeof(PVector));
   u->refcount = 0;
   for (size_t i = 0; i < NUM_CHILDREN; ++i) {
     u->children[i] = v->children[i];
@@ -159,7 +159,7 @@ void pvector_gc(PVector *v, uint64_t level) {
   if (v->refcount == 0) {
     ht_remove(ht, v->hash);
     if (level == 0 && TAGGED(((PVectorLeaf *)v)->bytes))
-      memory_free(UNTAG(((PVectorLeaf *)v)->bytes));
-    memory_free(v);
+      memory_free(NULL, UNTAG(((PVectorLeaf *)v)->bytes));
+    memory_free(NULL, v);
   }
 }
