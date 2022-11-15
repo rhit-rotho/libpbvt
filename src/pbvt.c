@@ -481,6 +481,8 @@ void pbvt_stats(PVectorState *pvs) {
   printf("Assuming full-copy for each state: %ld bytes\n", full_copy_sz);
   //   printf("Estimated reduction in overhead (overestimate): %f%%\n",
   //          100.0 * ((float)overhead - full_copy_sz) / full_copy_sz);
+
+  print_malloc_stats();
 }
 
 uint64_t pbvt_capacity(void) { return MAX_INDEX; }
