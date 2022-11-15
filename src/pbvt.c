@@ -245,6 +245,11 @@ void pbvt_commit_free(Commit *c) {
   memory_free(NULL, c);
 }
 
+void pbvt_branch_free(Branch *b) {
+  memory_free(NULL, b->name);
+  memory_free(NULL, b);
+}
+
 void pbvt_cleanup() {
   char c = MSG_SHUTDOWN;
   write(pipefd[0], &c, 1);
@@ -266,7 +271,7 @@ void pbvt_cleanup() {
     HashBucket *bucket = &pvs->branches->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
       HashEntry *he = &bucket->entries[j];
-      pbvt_commit_free(he->value);
+      pbvt_branch_free(he->value);
     }
   }
   ht_free(pvs->branches);
@@ -286,12 +291,12 @@ void pbvt_cleanup() {
 
   // TODO: Make these client stubs for message passing to another thread
   munmap(clone_stk, STACK_SIZE);
-  // printf("--- Persistent heap ---\n");
-  // print_malloc_stats(persistent_heap);
-  // printf("-----------------------\n");
+  printf("--- Persistent heap ---\n");
+  print_malloc_stats(persistent_heap);
+  printf("-----------------------\n");
   munmap(persistent_heap, HEAP_SIZE);
   memory_free(NULL, pvs);
-  // print_malloc_stats(NULL);
+  print_malloc_stats(NULL);
 }
 
 void pbvt_gc_n(size_t n) {
@@ -601,6 +606,8 @@ Commit *pbvt_commit() {
 void pbvt_branch_checkout(char *name) {
   uint64_t key = fasthash64(name, strlen(name), 0);
   Branch *b = ht_get(pvs->branches, key);
+  if (!b)
+    assert(0 && "Branch does not exist!");
   pbvt_checkout(b->head);
   pvs->branch = b;
 }
@@ -610,7 +617,10 @@ void pbvt_branch_commit(char *name) {
   uint64_t key = fasthash64(name, strlen(name), 0);
   Branch *b = memory_calloc(NULL, 1, sizeof(Branch));
   b->head = pvs->head;
-  b->name = strdup(name);
+
+  size_t nlen = strlen(name);
+  b->name = memory_malloc(NULL, nlen + 1);
+  strncpy(b->name, name, nlen + 1);
   pvs->branch = b;
   ht_insert(pvs->branches, key, b);
 }

@@ -34,13 +34,12 @@ int main(int argc, char **argv) {
   uint64_t max_index = pbvt_capacity();
   // pbvt_debug();
 
-  Commit *c = pbvt_commit();
   char *s1 = "Hello, world!";
   Node *head = pbvt_calloc(1, sizeof(Node));
   Node *n = head;
   char *p = s1;
   n->val = *p++;
-  c = pbvt_commit();
+  Commit *c = pbvt_commit();
   while (*p) {
     n->next = pbvt_calloc(1, sizeof(Node));
     n = n->next;
@@ -71,6 +70,13 @@ int main(int argc, char **argv) {
     n = n->next;
   }
   printf("\"\n");
+
+  n = head;
+  while (n) {
+    Node *t = n;
+    n = n->next;
+    pbvt_free(t);
+  }
 
   goto cleanup;
 
