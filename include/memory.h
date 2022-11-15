@@ -27,7 +27,7 @@ typedef struct MallocStats {
 
 // Each bin holds allocations of size 1 << i (down to 1-byte allocations)
 #define NUM_BINS 12
-#define BIN_SIZE (2 * 0x1000)
+#define BIN_SIZE (4 * 0x1000)
 
 // For our bitvector, 8 bits per uint8_t
 #define BITS_PER_BLOCK (8 * sizeof(uint8_t))

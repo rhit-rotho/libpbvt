@@ -8,6 +8,8 @@
 
 MallocStats memory_malloc_stats;
 
+// TODO: Add fastbins
+
 // Last bin is a linked list for oversized allocations
 BinHdr *bins[NUM_BINS + 1];
 
@@ -37,8 +39,10 @@ BinHdr *allocate_bin(size_t size) {
   bin->next = NULL;
   bin->prev = NULL;
 
-  // printf("// Allocating for %d-byte, efficiency: %f%%\n", size,
-  //        100.0 * (float)(c * size) / sz);
+#ifdef MDEBUG
+  printf("// Allocating for %ld-byte, efficiency: %f%%\n", size,
+         100.0 * (float)(c * size) / sz);
+#endif
 
   bin->sz = 0;
   bin->cap = c;
@@ -90,7 +94,9 @@ bin_found:
   else
     memcpy(dstptr, ptr, (ptr - bin->contents) + bin->memsz);
   memory_free(ptr);
-  // printf("realloc(%p, %ld); // bin: %p, %p\n", ptr, size, bin, dstptr);
+#ifdef MDEBUG
+  printf("realloc(%p, %ld); // bin: %p, %p\n", ptr, size, bin, dstptr);
+#endif
   return dstptr;
 }
 
@@ -112,7 +118,9 @@ void *memory_malloc(size_t size) {
   bin->next = bins[NUM_BINS];
   bins[idx] = bin;
   bin->sz += 1;
-  // printf("malloc(%ld); // %p\n", size, bin->contents);
+#ifdef MDEBUG
+  printf("malloc(%lx); // %p\n", size, bin->contents);
+#endif
   memory_malloc_stats.current_bytes += bin->memsz;
   memory_malloc_stats.current_allocations += 1;
   memory_malloc_stats.total_allocations += 1;
@@ -143,7 +151,9 @@ found_size:
   memory_malloc_stats.current_bytes += 1 << idx;
   memory_malloc_stats.current_allocations += 1;
   memory_malloc_stats.total_allocations += 1;
-  // printf("malloc(0x%lx); // bin: %p %p\n", size, bin, ptr);
+#ifdef MDEBUG
+  printf("malloc(0x%lx); // %p\n", size, ptr);
+#endif
   return ptr;
 }
 
@@ -205,19 +215,52 @@ coalesce:
     // printf("// Returned bin %p to OS\n", bin);
   }
 
-  // printf("free(%p);\n", ptr);
+#ifdef MDEBUG
+  printf("free(%p);\n", ptr);
+#endif
   return;
 }
 
 void print_malloc_stats(void) {
+#ifdef LIBC_MALLOC
+  malloc_stats();
+  return;
+#endif
   printf("Current number of bytes allocated: %ld\n",
          memory_malloc_stats.current_bytes);
   printf("Current number of allocations: %ld\n",
          memory_malloc_stats.current_allocations);
   printf("Current number of pages: %ld\n", memory_malloc_stats.current_pages);
+  printf("Amount of memory in use: %ld\n",
+         memory_malloc_stats.current_pages * 0x1000);
   printf("Efficiency: %f%%\n",
          100.0 * (float)memory_malloc_stats.current_bytes /
              (memory_malloc_stats.current_pages * 0x1000));
+  BinHdr *bin;
+  for (size_t idx = 0; idx < NUM_BINS; ++idx) {
+    bin = bins[idx];
+    size_t total_sz = 0;
+    size_t total_cap = 0;
+    while (bin) {
+      total_sz += bin->sz;
+      total_cap += bin->cap;
+      bin = bin->next;
+    }
+    if (total_sz > 0)
+      printf("Bin %ld-byte allocations, total size: %ld, total capacity: %ld\n",
+             1 << idx, total_sz, total_cap);
+  }
+
+  bin = bins[NUM_BINS];
+  size_t num_oversize = 0;
+  size_t total_size = 0;
+  while (bin) {
+    num_oversize += 1;
+    total_size += bin->memsz;
+    bin = bin->next;
+  }
+  printf("Wilderness: %ld oversize, total size: %ld\n", num_oversize,
+         total_size);
 }
 
 void bv_set(uint8_t *bv, uint64_t key) {

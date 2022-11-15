@@ -114,8 +114,6 @@ int uffd_monitor(void *args) {
         break;
       }
       case MSG_SHUTDOWN:
-        c = MSG_SUCCESS;
-        write(outfd, &c, 1);
         goto cleanup;
       default:
         xperror("userfaultfd_monitor: unrecognized char");
@@ -250,6 +248,16 @@ void pbvt_cleanup(PVectorState *pvs) {
   }
   ht_free(pvs->states);
 
+  // Free branches
+  for (size_t i = 0; i < pvs->branches->cap; ++i) {
+    HashBucket *bucket = &pvs->branches->buckets[i];
+    for (size_t j = 0; j < bucket->size; ++j) {
+      HashEntry *he = &bucket->entries[j];
+      pbvt_commit_free(he->value);
+    }
+  }
+  ht_free(pvs->branches);
+
   // Free ranges
   while (queue_size(pvs->ranges) > 0)
     memory_free(queue_popleft(pvs->ranges));
@@ -266,6 +274,7 @@ void pbvt_cleanup(PVectorState *pvs) {
   // TODO: Make these client stubs for message passing to another thread
   munmap(clone_stk, STACK_SIZE);
   memory_free(pvs);
+  print_malloc_stats();
 }
 
 void pbvt_gc_n(PVectorState *pvs, size_t n) {
