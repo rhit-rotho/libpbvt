@@ -61,9 +61,10 @@ PUBLIC void *pbvt_realloc(void *ptr, size_t size);
 PUBLIC void *pbvt_malloc(size_t size);
 PUBLIC void pbvt_free(void *ptr);
 
+PUBLIC void pbvt_stats();
+
 // private operations
 void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level);
-void pbvt_stats();
 void pbvt_debug(void);
 
 Commit *pbvt_commit_create(PVector *v, Commit *p);

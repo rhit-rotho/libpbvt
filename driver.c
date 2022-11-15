@@ -10,18 +10,11 @@
 
 #define MIN(a, b) ((a) > (b) ? (b) : (a))
 
-typedef struct Node Node;
-typedef struct Node {
-  Node *next;
-  char val;
-} Node;
-
 int main(int argc, char **argv) {
   if (argc < 3) {
     printf("./driver [TRIALS] [GC_THRESHOLD]\n");
     return 1;
   }
-
   printf("Size of additional copy: %d\n",
          NUM_BOTTOM + sizeof(PVectorLeaf) + sizeof(PVector) * (MAX_DEPTH - 1));
 
@@ -31,54 +24,6 @@ int main(int argc, char **argv) {
     gc_threshold = INT64_MAX;
 
   pbvt_init();
-  uint64_t max_index = pbvt_capacity();
-  // pbvt_debug();
-
-  char *s1 = "Hello, world!";
-  Node *head = pbvt_calloc(1, sizeof(Node));
-  Node *n = head;
-  char *p = s1;
-  n->val = *p++;
-  Commit *c = pbvt_commit();
-  while (*p) {
-    n->next = pbvt_calloc(1, sizeof(Node));
-    n = n->next;
-    n->val = *p++;
-    c = pbvt_commit();
-  }
-  pbvt_branch_commit("main");
-
-  while (c) {
-    pbvt_checkout(c);
-    printf("State: %.16lx (parent: %p)\n", c->hash, c->parent);
-    n = head;
-    printf("\"");
-    while (n) {
-      printf("%c", n->val);
-      n = n->next;
-    }
-    printf("\"\n");
-    c = c->parent;
-  }
-
-  pbvt_branch_checkout("main");
-  printf("State: %.16lx\n", pbvt_head()->hash);
-  n = head;
-  printf("\"");
-  while (n) {
-    printf("%c", n->val);
-    n = n->next;
-  }
-  printf("\"\n");
-
-  n = head;
-  while (n) {
-    Node *t = n;
-    n = n->next;
-    pbvt_free(t);
-  }
-
-  goto cleanup;
 
   size_t test_sz = 0x1000;
   uint8_t *test = mmap((void *)0x10000UL, test_sz, PROT_READ | PROT_WRITE,

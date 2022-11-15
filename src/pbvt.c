@@ -336,44 +336,42 @@ void pbvt_print(char *path) {
   fprintf(f, "digraph {\n");
   fprintf(f, "\tnode[shape=record];\n");
 
-  fprintf(f, "// %p\n", pvs);
+  HashTable *heads = ht_create();
+  for (size_t i = 0; i < pvs->branches->cap; ++i) {
+    HashBucket *bucket = &pvs->branches->buckets[i];
+    for (size_t j = 0; j < bucket->size; ++j) {
+      HashEntry *he = &bucket->entries[j];
+      Branch *b = he->value;
+      fprintf(f, "\tv%.16lx [\n", b->head->hash);
+      if (b->head == pvs->head)
+        fprintf(f, "\t\tcolor=\"green\"\n");
+      else
+        fprintf(f, "\t\tcolor=\"red\"\n");
+      fprintf(f, "\t\tlabel=\"%.16lx (%s)\"\n", b->head->hash, b->name);
+      fprintf(f, "\t];\n");
+      ht_insert(heads, b->head->hash, b->head);
+    }
+  }
 
-  // for(int i= 0; i < pvs->branches; ++i) {
-  fprintf(f, "\t\n");
-  // }
+  for (size_t i = 0; i < pvs->states->cap; ++i) {
+    HashBucket *bucket = &pvs->states->buckets[i];
+    for (size_t j = 0; j < bucket->size; ++j) {
+      HashEntry *he = &bucket->entries[j];
+      Commit *c = he->value;
+      if (c->parent)
+        fprintf(f, "\tv%.16lx -> v%.16lx;\n", c->hash, c->parent->hash);
+      if (ht_get(heads, c->hash))
+        continue;
+      fprintf(f, "\tv%.16lx [\n", c->hash);
+      fprintf(f, "\t\tlabel=\"%.16lx\"\n", c->hash);
+      fprintf(f, "\t];\n");
+    }
+  }
 
-  // HashTable *heads = ht_create();
-  // for (size_t i = 0; i < pvs->branches->cap; ++i) {
-  //   HashBucket *bucket = &pvs->branches->buckets[i];
-  //   for (size_t j = 0; j < bucket->size; ++j) {
-  //     HashEntry *he = &bucket->entries[j];
-  //     Branch *b = he->value;
-  //     fprintf(f, "\tv%.16lx [\n", b->head->hash);
-  //     if (b->head == pvs->head)
-  //       fprintf(f, "\t\tcolor=\"red\"");
-  //     fprintf(f, "\t\tlabel=\"%s\"", b->name);
-  //     fprintf(f, "\t];\n");
-  //     ht_insert(heads, b->head->hash, b->head);
-  //   }
-  // }
+  ht_free(heads);
 
-  // for (size_t i = 0; i < pvs->states->cap; ++i) {
-  //   HashBucket *bucket = &pvs->states->buckets[i];
-  //   for (size_t j = 0; j < bucket->size; ++j) {
-  //     HashEntry *he = &bucket->entries[j];
-  //     Commit *c = he->value;
-  //     if (c->parent)
-  //       fprintf(f, "\tv%.16lx -> v%.16lx;\n", c->hash, c->parent->hash);
-  //     if (ht_get(heads, c->hash))
-  //       continue;
-  //     fprintf(f, "\tv%.16lx [\n", c->hash);
-  //     fprintf(f, "\t\tcolor=\"red\"");
-  //     fprintf(f, "\t\tlabel=\"v%.2lx\"", c->hash & 0xff);
-  //     fprintf(f, "\t];\n");
-  //   }
-  // }
-
-  // ht_free(heads);
+  // TODO: Add support for printing both branch information and program timeline
+  goto cleanup;
 
   fprintf(f, "\ttimeline [\n");
   fprintf(f, "\t\tlabel = \"");
@@ -414,6 +412,7 @@ void pbvt_print(char *path) {
   //   pbvt_print_node(f, pr, (PVector *)queue_peekleft(pvs->states, i),
   //                   MAX_DEPTH - 1);
 
+cleanup:
   fprintf(f, "}\n");
   fclose(f);
   ht_free(pr);

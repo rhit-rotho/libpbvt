@@ -29,7 +29,7 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
 
   BinHdr *bin = mmap(NULL, sz, PROT_READ | PROT_WRITE,
                      MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-  // TODO: Ugly hack, should be handled inside pbvt.c
+  // HACK: Ugly, should be handled inside pbvt.c
   if (ms != &global_heap)
     pbvt_track_range(bin, sz);
   if (bin == MAP_FAILED)
