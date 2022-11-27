@@ -71,11 +71,13 @@ int main(int argc, char **argv) {
   printf("State: %.16lx\n", pbvt_head()->hash);
   ll_print(n1);
 
+  pbvt_branch_checkout("main");
   ll_free(n1);
 
-  // This is currently bugged, since the previous free returned all our pages
-  // back to the OS.
-  // pbvt_branch_checkout("main");
+  pbvt_branch_checkout("alt");
+  // Technically unnecessary, but demonstrates that we can do this again, since
+  // the linked list has not been freed in this state of the world.
+  ll_free(n1);
 
   pbvt_print("linked-list.dot");
   pbvt_stats();

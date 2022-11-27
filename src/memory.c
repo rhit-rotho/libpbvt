@@ -6,8 +6,10 @@
 
 #include "memory.h"
 
-MallocState global_heap;
+// Make sure this matches NUM_BINS in memory.h
+const size_t BIN_SIZES[] = {1, 2, 4, 8, 16, 24, 32, 64, 128};
 
+MallocState global_heap;
 // Allocate new bin for holding allocations of `size`
 BinHdr *allocate_bin(MallocState *ms, size_t size) {
   // Calculate capacity, size of our header + bitmap + alignment + contents
@@ -94,7 +96,7 @@ void *memory_realloc(MallocState *ms, void *ptr, size_t size) {
 bin_found:
   void *dstptr = memory_malloc(ms, size);
   if (idx < NUM_BINS)
-    memcpy(dstptr, ptr, 1 << idx);
+    memcpy(dstptr, ptr, BIN_SIZES[idx]);
   else
     memcpy(dstptr, ptr, (ptr - bin->contents) + bin->memsz);
   memory_free(ms, ptr);
@@ -115,7 +117,7 @@ void *memory_malloc(MallocState *ms, size_t size) {
   // round up to nearest power of 2
   size_t idx = 0;
   for (; idx < NUM_BINS; ++idx)
-    if (size <= (1UL << idx))
+    if (size <= BIN_SIZES[idx])
       goto found_size;
 
   // Binning for oversize allocations
@@ -126,7 +128,7 @@ void *memory_malloc(MallocState *ms, size_t size) {
   ms->bins[idx] = bin;
   bin->sz += 1;
 #ifdef MDEBUG
-  printf("malloc(%lx); // %p\n", size, bin->contents);
+  printf("malloc(0x%lx); // %p\n", size, bin->contents);
 #endif
   ms->current_bytes += bin->memsz;
   ms->current_allocations += 1;
@@ -136,7 +138,7 @@ void *memory_malloc(MallocState *ms, size_t size) {
 found_size:
   bin = ms->bins[idx];
   if (!bin) {
-    bin = allocate_bin(ms, 1 << idx);
+    bin = allocate_bin(ms, BIN_SIZES[idx]);
     ms->bins[idx] = bin;
   }
 
@@ -146,7 +148,7 @@ found_size:
     bin = bin->next;
 
   if (bin->sz == bin->cap) {
-    bin->next = allocate_bin(ms, 1 << idx);
+    bin->next = allocate_bin(ms, BIN_SIZES[idx]);
     bin->next->prev = bin;
     bin = bin->next;
   }
@@ -154,8 +156,8 @@ found_size:
   size_t i = bv_find_first_zero(bin->bitmap, bin->cap);
   bv_set(bin->bitmap, i);
   bin->sz += 1;
-  void *ptr = bin->contents + (i << idx);
-  ms->current_bytes += 1 << idx;
+  void *ptr = bin->contents + i * BIN_SIZES[idx];
+  ms->current_bytes += BIN_SIZES[idx];
   ms->current_allocations += 1;
   ms->total_allocations += 1;
 #ifdef MDEBUG
@@ -200,7 +202,7 @@ void memory_free(MallocState *ms, void *ptr) {
   assert(0 && "No bin found!");
 
 bin_found:
-  size_t i = (ptr - bin->contents) / (1 << idx);
+  size_t i = (ptr - bin->contents) / BIN_SIZES[idx];
   assert(bv_is_set(bin->bitmap, i));
   bv_unset(bin->bitmap, i);
 
@@ -209,10 +211,13 @@ coalesce:
   if (idx == NUM_BINS)
     ms->current_bytes -= bin->memsz;
   else
-    ms->current_bytes -= 1 << idx;
+    ms->current_bytes -= BIN_SIZES[idx];
 
   bin->sz -= 1;
-  if (bin->sz == 0) {
+  // We can't coalesce bins if we're using a persistent heap, since if a page
+  // is freed as part of one state it can be reclaimed by another part of the
+  // system before we can mmap it back.
+  if (bin->sz == 0 && ms == &global_heap) {
     if (bin->prev)
       bin->prev->next = bin->next;
     if (bin->next)
@@ -256,8 +261,8 @@ void print_malloc_stats(MallocState *ms) {
       bin = bin->next;
     }
     if (total_sz > 0)
-      printf("Bin %d-byte allocations, total size: %ld, total capacity: %ld\n",
-             1 << idx, total_sz, total_cap);
+      printf("Bin %ld-byte allocations, total size: %ld, total capacity: %ld\n",
+             BIN_SIZES[idx], total_sz, total_cap);
   }
 
   bin = ms->bins[NUM_BINS];

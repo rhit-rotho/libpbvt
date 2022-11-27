@@ -90,8 +90,8 @@ HDREXTS = .h .H .hh .hpp .HPP .h++ .hxx .hp
 
 # The pre-processor and compiler options.
 # Users can override those variables from the command line.
-CFLAGS  = -O2 # -DLIBC_MALLOC
-CXXFLAGS= -O2 # -DLIBC_MALLOC
+CFLAGS  = -O2 # -DMDEBUG # -DLIBC_MALLOC
+CXXFLAGS= -O2 # -DMDEBUG # -DLIBC_MALLOC
 
 # The command used to delete file.
 RM     = rm -f

@@ -33,13 +33,20 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  uint8_t *test_arr = mmap(NULL, test_sz, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
   for (int i = 0; i < test_sz; ++i)
-    test[i] = i & 0xf;
+    test[i] = i;
+  memcpy(test_arr, test, test_sz);
 
   // track changes
   printf("Adding range %p-%p...", test, test + test_sz);
   pbvt_track_range(test, test_sz);
   printf("done\n");
+
+  Commit *c = pbvt_commit();
+  pbvt_branch_commit("main");
 
   for (int64_t i = 1; i < trials; ++i) {
     for (int i = 0; i < 0x100; ++i) {
@@ -54,8 +61,17 @@ int main(int argc, char **argv) {
       pbvt_gc_n(gc_threshold / 2);
       COZ_PROGRESS;
     }
-    if (i % 0x100 == 0)
+    if (i % 0x100 == 0) {
       pbvt_stats();
+      pbvt_checkout(c);
+      printf("Checking: %.16lx\n", c->hash);
+      assert(memcmp(test_arr, test, test_sz) == 0);
+      pbvt_branch_checkout("main");
+      c = pbvt_head();
+      printf("Checking: %.16lx\n", c->hash);
+      assert(memcmp(test_arr, test, test_sz) != 0);
+      memcpy(test_arr, test, test_sz);
+    }
     COZ_PROGRESS;
   }
 

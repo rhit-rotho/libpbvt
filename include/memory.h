@@ -1,8 +1,49 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// Each bin holds allocations of size 1 << i (down to 1-byte allocations)
-#define NUM_BINS 12
+/*
+
+The main goal of our implementation is to avoid interfering with any client
+application, and minimizing the amount of metadata that needs to be dirtied on
+each call to malloc/free while still maintaining reasonable performance and
+overhead for small allocations.
+
+Our allocator consists of an array of pointers to a linked list of bins
+(allocated directly from mmap).
+
+Each bin has forward and backward pointers for supporting coalescing when one
+bin is emptied (in future this could also be done even when bins aren't empty,
+see e.g., "Mesh" by Emery Berger).
+
++--------+--------+--------+--------+
+| next   | prev   | cap    | sz     |
++--------+--------+--------+--------+
+| memsz  | bitmp* | cntns* |bbbbbbbb|
++--------+--------+--------+--------+
+|bbbbbbbb| bb...  | allocations.... |
++--------+--------+--------+--------+
+| ...                               |
++-----------------------------------+
+
+Additionally, each bin has a bitmap immediately following the header that
+represents which allocations are free. When first created, each bin is
+configured to only accept allocations of a certain size (usually a power of 2),
+with both bitmap and contents pointing to variable parts of the bin.
+
+Allocations larger than BIN_SIZE are added to a catch-all linked list of bins,
+with capacity 1 and a size large enough to contain at least one allocation of
+the desired size.
+
+All of our metadata is contained inside either the bin itself, or our
+MallocState struct, to support write-tracking for our persistent heap
+implementation. We call mmap instead of building on top of malloc to avoid
+mucking around with any internal state in malloc.
+
+*/
+
+// Make sure this matches sizeof(BIN_SIZES)/sizeof(BIN_SIZES[0]) in memory.c
+#define NUM_BINS (9)
+// This can be tuned
 #define BIN_SIZE (4 * 0x1000)
 
 // For our bitvector, 8 bits per uint8_t
