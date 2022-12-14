@@ -98,7 +98,7 @@ bin_found:
   if (idx < NUM_BINS)
     memcpy(dstptr, ptr, BIN_SIZES[idx]);
   else
-    memcpy(dstptr, ptr, (ptr - bin->contents) + bin->memsz);
+    memcpy(dstptr, ptr, (void *)bin + bin->memsz - bin->contents);
   memory_free(ms, ptr);
 #ifdef MDEBUG
   printf("realloc(%p, %ld); // bin: %p, %p\n", ptr, size, bin, dstptr);
@@ -128,7 +128,7 @@ void *memory_malloc(MallocState *ms, size_t size) {
   ms->bins[idx] = bin;
   bin->sz += 1;
 #ifdef MDEBUG
-  printf("malloc(0x%lx); // %p\n", size, bin->contents);
+  printf("malloc(0x%lx); // oversize: %p\n", size, bin->contents);
 #endif
   ms->current_bytes += bin->memsz;
   ms->current_allocations += 1;

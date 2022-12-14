@@ -73,3 +73,4 @@ void pbvt_branch_free(Branch *b);
 
 void pbvt_write_protect(Range *r, uint8_t);
 void pbvt_write_protect_internal(int uffd, Range *r, uint8_t dirty);
+Commit *pbvt_commit_internal(int uffd);

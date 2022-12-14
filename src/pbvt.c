@@ -29,6 +29,7 @@
 #define MSG_WRITE_PROTECT (0x42)
 #define MSG_SHUTDOWN (0x43)
 #define MSG_SUCCESS (0x44)
+#define MSG_COMMIT (0x45)
 
 #define xperror(x)                                                             \
   do {                                                                         \
@@ -81,6 +82,49 @@ int uffd_monitor(void *args) {
     if (poll(pollfds, 2, -1) < 0)
       xperror("poll(uffd)");
 
+    // TODO: Implement
+    if (pollfds[0].revents & POLLERR)
+      xperror("POLLERR in userfaultfd");
+
+    if (pollfds[0].revents & POLLIN) {
+      if (read(uffd, &msg, sizeof(msg)) < 0)
+        xperror("read(uffd)");
+
+      switch (msg.event) {
+      case UFFD_EVENT_PAGEFAULT:
+        if (msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP) {
+          Range *r = NULL;
+          for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
+            r = queue_peekleft(pvs->ranges, i);
+            if (r->address == (void *)msg.arg.pagefault.address)
+              break;
+            r = NULL;
+          }
+
+          assert(r);
+
+          for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
+            uint64_t hash = fasthash64(r->address + i, NUM_BOTTOM, 0);
+            PVectorLeaf *l = ht_get(ht, hash);
+            // Move any relevant nodes out of the way so they don't get
+            // clobbered by writes to this page
+            void *arrp = UNTAG(l->bytes);
+            if (r->address <= arrp && arrp < r->address + r->len) {
+              uint8_t *back = memory_calloc(NULL, NUM_BOTTOM, sizeof(uint8_t));
+              memcpy(back, arrp, NUM_BOTTOM);
+              l->bytes = TAG(back);
+            }
+          }
+
+          pbvt_write_protect_internal(uffd, r, 1);
+        }
+        break;
+      default:
+        printf("unrecognized event %d\n", msg.event);
+        break;
+      }
+    }
+
     if (pollfds[1].revents & POLLIN) {
       if (read(infd, &c, 1) < 0)
         xperror("monitor read");
@@ -114,6 +158,13 @@ int uffd_monitor(void *args) {
         write(outfd, &c, 1);
         break;
       }
+      case MSG_COMMIT: {
+        Commit *commit = pbvt_commit_internal(uffd);
+        c = MSG_SUCCESS;
+        write(outfd, &c, 1);
+        write(outfd, &commit, sizeof(Commit *));
+        break;
+      }
       case MSG_SHUTDOWN:
         goto cleanup;
       default:
@@ -122,47 +173,6 @@ int uffd_monitor(void *args) {
       }
 
       continue;
-    }
-
-    // TODO: Implement
-    if (pollfds[0].revents & POLLERR)
-      xperror("POLLERR in userfaultfd");
-
-    if (read(uffd, &msg, sizeof(msg)) < 0)
-      xperror("read(uffd)");
-
-    switch (msg.event) {
-    case UFFD_EVENT_PAGEFAULT:
-      if (msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP) {
-        Range *r = NULL;
-        for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
-          r = queue_peekleft(pvs->ranges, i);
-          if (r->address == (void *)msg.arg.pagefault.address)
-            break;
-          r = NULL;
-        }
-
-        assert(r);
-
-        for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
-          uint64_t hash = fasthash64(r->address + i, NUM_BOTTOM, 0);
-          PVectorLeaf *l = ht_get(ht, hash);
-          // Move any relevant nodes out of the way so they don't get clobbered
-          // by writes to this page
-          void *arrp = UNTAG(l->bytes);
-          if (r->address <= arrp && arrp < r->address + r->len) {
-            uint8_t *back = memory_calloc(NULL, NUM_BOTTOM, sizeof(uint8_t));
-            memcpy(back, arrp, NUM_BOTTOM);
-            l->bytes = TAG(back);
-          }
-        }
-
-        pbvt_write_protect_internal(uffd, r, 1);
-      }
-      break;
-    default:
-      printf("unrecognized event %d\n", msg.event);
-      break;
     }
   }
 
@@ -557,6 +567,17 @@ void pbvt_track_range(void *range, size_t n) {
 }
 
 Commit *pbvt_commit() {
+  Commit *commit;
+  char c = MSG_COMMIT;
+  write(pipefd[0], &c, 1);
+
+  read(pipefd[1], &c, 1);
+  read(pipefd[1], &commit, sizeof(Commit *));
+  assert(c == MSG_SUCCESS);
+  return commit;
+}
+
+Commit *pbvt_commit_internal(int uffd) {
   Range *r;
 
   Branch *cb = pvs->branch;
@@ -570,6 +591,7 @@ Commit *pbvt_commit() {
     if (!r->dirty)
       continue;
 
+    pbvt_write_protect_internal(uffd, r, 0);
     u = pvector_update_n(v, (uint64_t)r->address, (uint8_t *)r->address,
                          r->len);
 
@@ -584,7 +606,6 @@ Commit *pbvt_commit() {
       l->bytes = (uint8_t *)r->address + i;
     }
 
-    pbvt_write_protect(r, 0);
     pvector_gc(v, MAX_DEPTH - 1);
     v = u;
   }

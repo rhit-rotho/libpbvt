@@ -54,9 +54,7 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
       memory_free(NULL, bucket->entries);
     }
     memory_free(NULL, ht->buckets);
-    ht->buckets = hn->buckets;
-    ht->size = hn->size;
-    ht->cap = hn->cap;
+    memcpy(ht, hn, sizeof(HashTable));
   }
 
   HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
