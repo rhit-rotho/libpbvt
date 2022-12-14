@@ -7,7 +7,7 @@
 #include "memory.h"
 
 // Make sure this matches NUM_BINS in memory.h
-const size_t BIN_SIZES[] = {1, 2, 4, 8, 16, 24, 32, 64, 128};
+const size_t BIN_SIZES[] = {8, 24, 32, 64, 128, 272};
 
 MallocState global_heap;
 // Allocate new bin for holding allocations of `size`
@@ -107,6 +107,8 @@ bin_found:
 }
 
 void *memory_malloc(MallocState *ms, size_t size) {
+  // if(size > 256)
+  // asm("int3");
 #ifdef LIBC_MALLOC
   return malloc(size);
 #endif

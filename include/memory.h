@@ -42,7 +42,7 @@ mucking around with any internal state in malloc.
 */
 
 // Make sure this matches sizeof(BIN_SIZES)/sizeof(BIN_SIZES[0]) in memory.c
-#define NUM_BINS (9)
+#define NUM_BINS (6)
 // This can be tuned
 #define BIN_SIZE (4 * 0x1000)
 

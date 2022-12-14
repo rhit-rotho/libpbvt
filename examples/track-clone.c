@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
   for (;;) {
     pbvt_stats();
     pbvt_commit();
-    usleep(1000);
+    usleep(100000);
   }
 
   pbvt_cleanup();
