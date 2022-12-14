@@ -7,7 +7,8 @@
 #include "memory.h"
 
 // Make sure this matches NUM_BINS in memory.h
-const size_t BIN_SIZES[] = {8, 24, 32, 64, 128, 272};
+// TODO: Add sizeof(PVector), sizeof(PVectorLeaf) as dedicated bin sizes
+const size_t BIN_SIZES[] = {8, 24, 32, 64, 128, 256};
 
 MallocState global_heap;
 // Allocate new bin for holding allocations of `size`

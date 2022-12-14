@@ -490,17 +490,18 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
 void pbvt_debug(void) {
   printf("---------PBVT STATS---------\n");
   printf("NUM_BITS       = %d\n", NUM_BITS);
-  printf("MAX_INDEX      = 0x%lx\n", MAX_INDEX);
+  // printf("MAX_INDEX      = 0x%lx\n", MAX_INDEX);
   printf("NUM_CHILDREN   = %ld\n", NUM_CHILDREN);
-  printf("BOTTOM_BITS    = %d\n", BOTTOM_BITS);
-  printf("MAX_DEPTH      = %d\n", MAX_DEPTH);
+  // printf("BOTTOM_BITS    = %d\n", BOTTOM_BITS);
+  // printf("MAX_DEPTH      = %d\n", MAX_DEPTH);
   printf("NUM_BOTTOM     = %ld\n", NUM_BOTTOM);
-  printf("BITS_PER_LEVEL = %d\n", BITS_PER_LEVEL);
-  printf("BOTTOM_MASK    = %ld\n", BOTTOM_MASK);
-  printf("CHILD_MASK     = %ld\n", CHILD_MASK);
+  // printf("BITS_PER_LEVEL = %d\n", BITS_PER_LEVEL);
+  // printf("BOTTOM_MASK    = %ld\n", BOTTOM_MASK);
+  // printf("CHILD_MASK     = %ld\n", CHILD_MASK);
 }
 
 void pbvt_stats() {
+  pbvt_debug();
   printf("Tracked states: %ld\n", ht_size(pvs->states));
   printf("Number of nodes: %ld\n", ht_size(ht));
   printf("Theoretical max: 0x%lx\n", MAX_INDEX);

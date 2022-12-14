@@ -7,6 +7,8 @@
 #define NUM_BITS (48)
 #define BITS_PER_LEVEL (5)
 #define BOTTOM_BITS (3)
+// #define BITS_PER_LEVEL (9)
+// #define BOTTOM_BITS (12)
 
 // Calculated defines, make sure (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL == 0
 #if (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL != 0
