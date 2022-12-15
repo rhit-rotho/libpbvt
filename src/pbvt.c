@@ -44,6 +44,8 @@ typedef struct uffd_args {
 } uffd_args;
 
 int uffd_monitor(void *args) {
+  printf("uffd_monitor: %d\n", getpid());
+
   struct pollfd pollfds[2];
   struct uffd_msg msg = {};
 
@@ -270,8 +272,8 @@ void pbvt_cleanup() {
   for (size_t i = 0; i < pvs->states->cap; ++i) {
     HashBucket *bucket = &pvs->states->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      HashEntry *he = &bucket->entries[j];
-      pbvt_commit_free(he->value);
+      Commit*c = (Commit*)&bucket->values[j];
+      pbvt_commit_free(c);
     }
   }
   ht_free(pvs->states);
@@ -280,8 +282,8 @@ void pbvt_cleanup() {
   for (size_t i = 0; i < pvs->branches->cap; ++i) {
     HashBucket *bucket = &pvs->branches->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      HashEntry *he = &bucket->entries[j];
-      pbvt_branch_free(he->value);
+      Branch *b = (Branch*)&bucket->values[j];
+      pbvt_branch_free(b);
     }
   }
   ht_free(pvs->branches);
@@ -350,8 +352,7 @@ void pbvt_print(char *path) {
   for (size_t i = 0; i < pvs->branches->cap; ++i) {
     HashBucket *bucket = &pvs->branches->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      HashEntry *he = &bucket->entries[j];
-      Branch *b = he->value;
+      Branch *b = (Branch*)&bucket->values[j];
       fprintf(f, "\tv%.16lx [\n", b->head->hash);
       if (b->head == pvs->head)
         fprintf(f, "\t\tcolor=\"green\"\n");
@@ -366,8 +367,7 @@ void pbvt_print(char *path) {
   for (size_t i = 0; i < pvs->states->cap; ++i) {
     HashBucket *bucket = &pvs->states->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      HashEntry *he = &bucket->entries[j];
-      Commit *c = he->value;
+      Commit *c = (Commit*)&bucket->values[j];
       if (c->parent)
         fprintf(f, "\tv%.16lx -> v%.16lx;\n", c->hash, c->parent->hash);
       if (ht_get(heads, c->hash))

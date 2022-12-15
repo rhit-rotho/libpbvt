@@ -7,13 +7,10 @@
 #define HT_LOADING_FACTOR (2)
 #define HT_BUCKET_CAP HT_LOADING_FACTOR
 
-typedef struct HashEntry {
-  uint64_t key;
-  void *value;
-} HashEntry;
-
 typedef struct HashBucket {
-  HashEntry *entries;
+  uint64_t *keys;
+  void **values;
+
   size_t cap;
   size_t size;
 } HashBucket;

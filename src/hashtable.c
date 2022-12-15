@@ -12,8 +12,10 @@ HashTable *ht_create(void) {
   for (size_t i = 0; i < ht->cap; ++i) {
     ht->buckets[i].size = 0;
     ht->buckets[i].cap = HT_BUCKET_CAP;
-    ht->buckets[i].entries =
-        memory_calloc(NULL, ht->buckets[i].cap, sizeof(HashEntry));
+    ht->buckets[i].keys =
+        memory_calloc(NULL, ht->buckets[i].cap, sizeof(uint64_t));
+    ht->buckets[i].values =
+        memory_calloc(NULL, ht->buckets[i].cap, sizeof(void *));
   }
   return ht;
 }
@@ -21,8 +23,8 @@ HashTable *ht_create(void) {
 void *ht_get(HashTable *ht, uint64_t key) {
   HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
   for (size_t i = 0; i < bucket->size; ++i)
-    if (bucket->entries[i].key == key)
-      return bucket->entries[i].value;
+    if (bucket->keys[i] == key)
+      return bucket->values[i];
   return NULL;
 }
 
@@ -40,19 +42,21 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
     for (size_t i = 0; i < hn->cap; ++i) {
       hn->buckets[i].size = 0;
       hn->buckets[i].cap = HT_BUCKET_CAP;
-      hn->buckets[i].entries =
-          memory_calloc(NULL, hn->buckets[i].cap, sizeof(HashEntry));
+      hn->buckets[i].keys =
+          memory_calloc(NULL, hn->buckets[i].cap, sizeof(uint64_t));
+      hn->buckets[i].values =
+          memory_calloc(NULL, hn->buckets[i].cap, sizeof(void *));
     }
 
     // reinsert
     for (size_t i = 0; i < ht->cap; ++i) {
       HashBucket *bucket = &ht->buckets[i];
       for (size_t j = 0; j < bucket->size; ++j) {
-        HashEntry he = bucket->entries[j];
         // WARNING: Recursive call, make sure this doesn't reshuffle
-        ht_insert(hn, he.key, he.value);
+        ht_insert(hn, bucket->keys[j], bucket->values[j]);
       }
-      memory_free(NULL, bucket->entries);
+      memory_free(NULL, bucket->keys);
+      memory_free(NULL, bucket->values);
     }
     memory_free(NULL, ht->buckets);
     memcpy(ht, hn, sizeof(HashTable));
@@ -61,12 +65,14 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
   HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
   if (bucket->size + 1 == bucket->cap) {
     bucket->cap *= 2;
-    bucket->entries =
-        memory_realloc(NULL, bucket->entries, sizeof(HashEntry) * bucket->cap);
+    bucket->keys =
+        memory_realloc(NULL, bucket->keys, sizeof(uint64_t) * bucket->cap);
+    bucket->values =
+        memory_realloc(NULL, bucket->values, sizeof(void *) * bucket->cap);
   }
 
-  HashEntry be = {key, val};
-  bucket->entries[bucket->size] = be;
+  bucket->keys[bucket->size] = key;
+  bucket->values[bucket->size] = val;
   bucket->size++;
   ht->size++;
 
@@ -76,14 +82,18 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
 void *ht_remove(HashTable *ht, uint64_t key) {
   HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
   for (size_t i = 0; i < bucket->size; ++i)
-    if (bucket->entries[i].key == key) {
-      void *val = bucket->entries[i].value;
+    if (bucket->keys[i] == key) {
+      void *val = bucket->values[i];
       // Shift all elements back one. This should be fast because of our low
       // loading factor.
-      for (size_t j = i; j < bucket->size - 1; ++j)
-        bucket->entries[j] = bucket->entries[j + 1];
-      // memmove(&bucket->entries[i], &bucket->entries[i + 1],
-      //         sizeof(HashEntry) * (bucket->size - i));
+      // for (size_t j = i; j < bucket->size - 1; ++j) {
+      //   bucket->keys[j] = bucket->keys[j + 1];
+      //   bucket->values[j] = bucket->values[j + 1];
+      // }
+      memmove(&bucket->keys[i], &bucket->keys[i + 1],
+              sizeof(uint64_t) * (bucket->size - i));
+      memmove(&bucket->values[i], &bucket->values[i + 1],
+              sizeof(void *) * (bucket->size - i));
       bucket->size--;
       ht->size--;
       return val;
@@ -92,8 +102,10 @@ void *ht_remove(HashTable *ht, uint64_t key) {
 }
 
 void ht_free(HashTable *ht) {
-  for (size_t i = 0; i < ht->cap; ++i)
-    memory_free(NULL, ht->buckets[i].entries);
+  for (size_t i = 0; i < ht->cap; ++i) {
+    memory_free(NULL, ht->buckets[i].keys);
+    memory_free(NULL, ht->buckets[i].values);
+  }
   memory_free(NULL, ht->buckets);
   memory_free(NULL, ht);
 }
