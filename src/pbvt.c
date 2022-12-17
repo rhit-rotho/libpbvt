@@ -242,6 +242,7 @@ void pbvt_init(void) {
 
 Commit *pbvt_commit_create(PVector *v, Commit *p) {
   Commit *c = memory_calloc(NULL, 1, sizeof(Commit));
+  assert(c != NULL);
 
   uint64_t content[2] = {v->hash, p ? p->hash : 0UL};
   c->hash = fasthash64(content, sizeof(content), 0);

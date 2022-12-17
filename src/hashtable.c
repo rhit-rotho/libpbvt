@@ -28,39 +28,42 @@ void *ht_get(HashTable *ht, uint64_t key) {
   return NULL;
 }
 
+void ht_rekey(HashTable *ht) {
+  HashTable hnt = {0};
+  HashTable *hn = &hnt;
+  hn->size = 0;
+  hn->cap = ht->cap * 2;
+  hn->buckets = memory_calloc(NULL, hn->cap, sizeof(HashBucket));
+  for (size_t i = 0; i < hn->cap; ++i) {
+    hn->buckets[i].size = 0;
+    hn->buckets[i].cap = HT_BUCKET_CAP;
+    hn->buckets[i].keys =
+        memory_calloc(NULL, hn->buckets[i].cap, sizeof(uint64_t));
+    hn->buckets[i].values =
+        memory_calloc(NULL, hn->buckets[i].cap, sizeof(void *));
+  }
+
+  // reinsert
+  for (size_t i = 0; i < ht->cap; ++i) {
+    HashBucket *bucket = &ht->buckets[i];
+    for (size_t j = 0; j < bucket->size; ++j) {
+      // WARNING: Recursive call, make sure this doesn't reshuffle
+      ht_insert(hn, bucket->keys[j], bucket->values[j]);
+    }
+    memory_free(NULL, bucket->keys);
+    memory_free(NULL, bucket->values);
+  }
+  memory_free(NULL, ht->buckets);
+  memcpy(ht, hn, sizeof(HashTable));
+}
+
 // Assumes caller does not try to insert duplicates
 int ht_insert(HashTable *ht, uint64_t key, void *val) {
   assert(!ht_get(ht, key));
 
   // rekey and free
-  if (ht->size == ht->cap * HT_LOADING_FACTOR) {
-    HashTable hnt = {0};
-    HashTable *hn = &hnt;
-    hn->size = 0;
-    hn->cap = ht->cap * 2;
-    hn->buckets = memory_calloc(NULL, hn->cap, sizeof(HashBucket));
-    for (size_t i = 0; i < hn->cap; ++i) {
-      hn->buckets[i].size = 0;
-      hn->buckets[i].cap = HT_BUCKET_CAP;
-      hn->buckets[i].keys =
-          memory_calloc(NULL, hn->buckets[i].cap, sizeof(uint64_t));
-      hn->buckets[i].values =
-          memory_calloc(NULL, hn->buckets[i].cap, sizeof(void *));
-    }
-
-    // reinsert
-    for (size_t i = 0; i < ht->cap; ++i) {
-      HashBucket *bucket = &ht->buckets[i];
-      for (size_t j = 0; j < bucket->size; ++j) {
-        // WARNING: Recursive call, make sure this doesn't reshuffle
-        ht_insert(hn, bucket->keys[j], bucket->values[j]);
-      }
-      memory_free(NULL, bucket->keys);
-      memory_free(NULL, bucket->values);
-    }
-    memory_free(NULL, ht->buckets);
-    memcpy(ht, hn, sizeof(HashTable));
-  }
+  if (ht->size == ht->cap * HT_LOADING_FACTOR)
+    ht_rekey(ht);
 
   HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
   if (bucket->size + 1 == bucket->cap) {
