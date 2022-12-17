@@ -272,7 +272,7 @@ void pbvt_cleanup() {
   for (size_t i = 0; i < pvs->states->cap; ++i) {
     HashBucket *bucket = &pvs->states->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      Commit*c = (Commit*)&bucket->values[j];
+      Commit *c = (Commit *)&bucket->values[j];
       pbvt_commit_free(c);
     }
   }
@@ -282,7 +282,7 @@ void pbvt_cleanup() {
   for (size_t i = 0; i < pvs->branches->cap; ++i) {
     HashBucket *bucket = &pvs->branches->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      Branch *b = (Branch*)&bucket->values[j];
+      Branch *b = (Branch *)&bucket->values[j];
       pbvt_branch_free(b);
     }
   }
@@ -352,7 +352,7 @@ void pbvt_print(char *path) {
   for (size_t i = 0; i < pvs->branches->cap; ++i) {
     HashBucket *bucket = &pvs->branches->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      Branch *b = (Branch*)&bucket->values[j];
+      Branch *b = (Branch *)&bucket->values[j];
       fprintf(f, "\tv%.16lx [\n", b->head->hash);
       if (b->head == pvs->head)
         fprintf(f, "\t\tcolor=\"green\"\n");
@@ -367,7 +367,7 @@ void pbvt_print(char *path) {
   for (size_t i = 0; i < pvs->states->cap; ++i) {
     HashBucket *bucket = &pvs->states->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      Commit *c = (Commit*)&bucket->values[j];
+      Commit *c = (Commit *)&bucket->values[j];
       if (c->parent)
         fprintf(f, "\tv%.16lx -> v%.16lx;\n", c->hash, c->parent->hash);
       if (ht_get(heads, c->hash))

@@ -58,6 +58,7 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
   return bin;
 }
 
+// TODO: This should allocate nmemb all from the same bin
 void *memory_calloc(MallocState *ms, size_t nmemb, size_t size) {
 #ifdef LIBC_MALLOC
   return calloc(nmemb, size);

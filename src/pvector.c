@@ -6,41 +6,28 @@
 #include "memory.h"
 #include "pvector.h"
 
-extern HashTable *ht;
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
-// We can do this without cloning all the child nodes because our tree is
-// persistent; all operations on the data structure will clone any children as
-// necessary, so we can be lazy here.
-PVectorLeaf *pvector_clone_leaf(PVectorLeaf *l) {
-  PVectorLeaf *u = memory_calloc(NULL, 1, sizeof(PVectorLeaf));
-  u->refcount = 0;
-  // u->level = 0;
-  u->bytes = TAG(memory_calloc(NULL, NUM_BOTTOM, sizeof(uint8_t)));
-  if (UNTAG(l->bytes))
-    memcpy(UNTAG(u->bytes), UNTAG(l->bytes), NUM_BOTTOM);
-  return u;
-}
+extern HashTable *ht;
 
 PVector *pvector_clone(PVector *v) {
   PVector *u = memory_calloc(NULL, 1, sizeof(PVector));
-  u->refcount = 0;
-  for (size_t i = 0; i < NUM_CHILDREN; ++i) {
+  u->hash = v->hash;
+  for (size_t i = 0; i < NUM_CHILDREN; ++i)
     u->children[i] = v->children[i];
-    if (u->children[i]) {
-      PVector *c = ht_get(ht, u->children[i]);
-      c->refcount++;
-    }
-  }
   return u;
 }
 
 // This is (purposely) similar to a page-walk, except instead of 12-bit page
 // tables, we have BITS_PER_LEVEL-bits
-uint8_t pvector_get(PVector *v, uint64_t idx) {
+uint8_t pvector_get(PVector *t, uint64_t idx) {
   uint64_t key;
 
+  PVector *v = t;
+
+  uint64_t idxn = idx >> BOTTOM_BITS;
   for (int i = MAX_DEPTH - 1; i >= 1; --i) {
-    key = (idx >> ((i - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) & CHILD_MASK;
+    key = (idxn >> (i - 1) * BITS_PER_LEVEL) & CHILD_MASK;
     if (!v->children[key])
       return 0; // Assume memory is 0-initialized
     v = ht_get(ht, v->children[key]);
@@ -51,13 +38,70 @@ uint8_t pvector_get(PVector *v, uint64_t idx) {
 PVectorLeaf *pvector_get_leaf(PVector *v, uint64_t idx) {
   uint64_t key;
 
+  uint64_t idxn = idx >> BOTTOM_BITS;
   for (int i = MAX_DEPTH - 1; i >= 1; --i) {
-    key = (idx >> ((i - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) & CHILD_MASK;
+    key = (idxn >> (i - 1) * BITS_PER_LEVEL) & CHILD_MASK;
     if (!v->children[key])
       return 0; // Assume memory is 0-initialized
     v = ht_get(ht, v->children[key]);
   }
   return (PVectorLeaf *)v;
+}
+
+PVector *pvector_update_n_helper(PVector *v, uint64_t depth, uint64_t idx,
+                                 uint8_t *buf, size_t n) {
+  if (depth == 0) {
+    uint64_t hash = fasthash64(buf, n, 0);
+    PVectorLeaf *l = (PVectorLeaf *)v;
+    if (ht_get(ht, hash) != NULL)
+      return (PVector *)ht_get(ht, hash);
+
+    l = memory_calloc(NULL, 1, sizeof(PVectorLeaf));
+    l->bytes = memory_calloc(NULL, NUM_BOTTOM, sizeof(uint8_t));
+    memcpy(l->bytes, buf, n);
+    l->bytes = TAG(l->bytes);
+    l->hash = hash;
+    ht_insert(ht, l->hash, l);
+    return (PVector *)l;
+  }
+
+  uint64_t k;
+  uint64_t tn;
+
+  tn = NUM_BOTTOM;
+  for (uint64_t i = 0; i < depth - 1; ++i)
+    tn *= NUM_CHILDREN;
+  k = (idx >> ((depth - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) & CHILD_MASK;
+
+  int cloned = 0; // Do we have an exclusive copy?
+  uint64_t rbytes = n;
+  for (uint64_t i = 0; i < n; i += tn) {
+    PVector *u = (PVector *)ht_get(ht, v->children[k]);
+    u = pvector_update_n_helper(u, depth - 1, idx + i, buf + i,
+                                MIN(tn, rbytes));
+
+    if (v->children[k] != u->hash) {
+      if (!cloned) {
+        v = pvector_clone(v);
+        cloned = 1;
+      }
+      v->children[k] = u->hash;
+    }
+
+    k++;
+    rbytes -= tn;
+  }
+
+  if (cloned) {
+    v->hash = fasthash64(v->children, NUM_CHILDREN * sizeof(uint64_t), 0);
+    if (ht_get(ht, v->hash) == NULL) {
+      ht_insert(ht, v->hash, v);
+
+      for (uint64_t m = 0; m < NUM_CHILDREN; ++m)
+        ((PVector *)ht_get(ht, v->children[m]))->refcount++;
+    }
+  }
+  return v;
 }
 
 // TODO: This can be much more optimized
@@ -68,78 +112,15 @@ PVector *pvector_update_n(PVector *v, uint64_t idx, uint8_t *buf, size_t n) {
   assert(idx % NUM_BOTTOM == 0);
   assert(n % NUM_BOTTOM == 0);
 
-  PVector *t;
-
-  // Since the caller still has a reference to v
+  v = pvector_update_n_helper(v, MAX_DEPTH - 1, idx, buf, n);
   v->refcount++;
-  for (size_t i = 0; i < n; ++i) {
-    t = pvector_update(v, idx + i, buf[i]);
-    pvector_gc(v, MAX_DEPTH - 1);
-    v = t;
-  }
   return v;
 }
 
 PVector *pvector_update(PVector *v, uint64_t idx, uint8_t val) {
   assert(idx <= MAX_INDEX);
 
-  PVector *path[MAX_DEPTH] = {0};
-  uint64_t key;
-  uint64_t hash;
-
-  // build path down into tree
-  for (int i = MAX_DEPTH - 1; i >= 1; --i) {
-    path[i] = v;
-    key = (idx >> ((i - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) & CHILD_MASK;
-    v = ht_get(ht, v->children[key]);
-  }
-
-  uint8_t bytes[NUM_BOTTOM] = {0};
-  if (UNTAG(((PVectorLeaf *)v)->bytes))
-    memcpy(bytes, UNTAG(((PVectorLeaf *)v)->bytes), sizeof(bytes));
-  bytes[idx & BOTTOM_MASK] = val;
-  hash = fasthash64(bytes, sizeof(bytes), 0);
-
-  if (ht_get(ht, hash)) {
-    v = ht_get(ht, hash);
-  } else {
-    v = (PVector *)pvector_clone_leaf((PVectorLeaf *)v);
-    UNTAG(((PVectorLeaf *)v)->bytes)[idx & BOTTOM_MASK] = val;
-    v->hash = hash;
-    ht_insert(ht, hash, v);
-  }
-  PVector *prev = v;
-
-  // Propogate hashes back up the tree
-  uint64_t children[NUM_CHILDREN];
-  for (int i = 1; i < MAX_DEPTH; ++i) {
-    v = path[i];
-    key = (idx >> ((i - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) & CHILD_MASK;
-
-    memcpy(children, v->children, sizeof(children));
-    children[key] = prev->hash;
-    hash = fasthash64(children, sizeof(children), 0);
-
-    // We split this up from the dirty check, since the node we would've
-    // created with may already exist
-    if (ht_get(ht, hash)) {
-      v = ht_get(ht, hash);
-    } else {
-      v = pvector_clone(v);
-      // v->level = i;
-      ((PVector *)ht_get(ht, v->children[key]))->refcount--;
-      prev->refcount++;
-      v->children[key] = prev->hash;
-      v->hash = hash;
-      ht_insert(ht, hash, v);
-    }
-    prev = v;
-  }
-
-  // We always do this since our caller now has a reference to the new root
-  // node
-  v->refcount++;
-  return v;
+  return pvector_update_n(v, idx, &val, 1);
 }
 
 // Decrement reference count starting at root, free any nodes whose reference

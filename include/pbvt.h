@@ -44,6 +44,8 @@ PUBLIC size_t pbvt_size();
 PUBLIC void pbvt_print(char *path);
 PUBLIC void pbvt_track_range(void *range, size_t n);
 
+PUBLIC void pbvt_update_n(uint64_t key, void *buf, size_t len);
+
 PUBLIC Commit *pbvt_commit();
 PUBLIC void pbvt_checkout(Commit *commit);
 
