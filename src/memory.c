@@ -8,7 +8,7 @@
 
 // Make sure this matches NUM_BINS in memory.h
 // TODO: Add sizeof(PVector), sizeof(PVectorLeaf) as dedicated bin sizes
-const size_t BIN_SIZES[] = {8, 24, 32, 64, 128, 256};
+const size_t BIN_SIZES[] = {16, 24, 32, 64, 128, 256};
 
 MallocState global_heap;
 // Allocate new bin for holding allocations of `size`
@@ -55,6 +55,15 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
       (void *)(((uintptr_t)bin->bitmap + ((bin->cap + 7) / 8) + 0x0f) & ~0xf);
 
   ms->current_pages += sz / 0x1000;
+
+  bin->binidx = NUM_BINS;
+  for (int i = 0; i < NUM_BINS; ++i) {
+    if (size <= BIN_SIZES[i]) {
+      bin->binidx = i;
+      break;
+    }
+  }
+
   return bin;
 }
 
@@ -152,9 +161,9 @@ found_size:
     bin = bin->next;
 
   if (bin->sz == bin->cap) {
-    bin->next = allocate_bin(ms, BIN_SIZES[idx]);
-    bin->next->prev = bin;
-    bin = bin->next;
+    bin = allocate_bin(ms, BIN_SIZES[idx]);
+    bin->next = ms->bins[idx];
+    ms->bins[idx] = bin;
   }
 
   size_t i = bv_find_first_zero(bin->bitmap, bin->cap);
@@ -185,8 +194,17 @@ void memory_free(MallocState *ms, void *ptr) {
     return;
 
   BinHdr *bin;
-  size_t idx = 0;
-  for (; idx < NUM_BINS; ++idx) {
+  size_t idx;
+
+  for (idx = 0; idx < NUM_BINS; ++idx) {
+    bin = ms->fbin[idx];
+    if (!bin)
+      continue;
+    if (bin->contents <= ptr && ptr < (void *)bin + bin->memsz)
+      goto bin_found;
+  }
+
+  for (idx = 0; idx < NUM_BINS; ++idx) {
     bin = ms->bins[idx];
     while (bin) {
       if (bin->contents <= ptr && ptr < (void *)bin + bin->memsz)
@@ -203,19 +221,28 @@ void memory_free(MallocState *ms, void *ptr) {
     bin = bin->next;
   }
 
+  // // Otherwise assume bin is aligned to BIN_SIZE
+  // bin = (BinHdr *)((uintptr_t)ptr & ~(BIN_SIZE - 1));
+  // goto bin_found;
+
   assert(0 && "No bin found!");
 
+  assert(bin->contents <= ptr && ptr < (void *)bin + bin->memsz);
 bin_found:
-  size_t i = (ptr - bin->contents) / BIN_SIZES[idx];
+  if (idx < NUM_BINS)
+    ms->fbin[idx] = bin;
+
+  size_t i = (ptr - bin->contents) / BIN_SIZES[bin->binidx];
   assert(bv_is_set(bin->bitmap, i));
   bv_unset(bin->bitmap, i);
+  memset(ptr, 0x55, BIN_SIZES[bin->binidx]);
 
 coalesce:
   ms->current_allocations -= 1;
-  if (idx == NUM_BINS)
+  if (bin->binidx == NUM_BINS)
     ms->current_bytes -= bin->memsz;
   else
-    ms->current_bytes -= BIN_SIZES[idx];
+    ms->current_bytes -= BIN_SIZES[bin->binidx];
 
   bin->sz -= 1;
   // We can't coalesce bins if we're using a persistent heap, since if a page
@@ -226,8 +253,10 @@ coalesce:
       bin->prev->next = bin->next;
     if (bin->next)
       bin->next->prev = bin->prev;
-    if (ms->bins[idx] == bin)
-      ms->bins[idx] = bin->next;
+    if (bin->binidx < NUM_BINS && ms->bins[bin->binidx] == bin)
+      ms->bins[bin->binidx] = bin->next;
+    if (ms->fbin[bin->binidx] == bin)
+      ms->fbin[bin->binidx] = NULL;
     ms->current_pages -= bin->memsz / 0x1000;
     if (munmap(bin, bin->memsz) == -1)
       assert(0 && "munmap failed!");

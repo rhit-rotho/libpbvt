@@ -43,8 +43,8 @@ mucking around with any internal state in malloc.
 
 // Make sure this matches sizeof(BIN_SIZES)/sizeof(BIN_SIZES[0]) in memory.c
 #define NUM_BINS (6)
-// This can be tuned
-#define BIN_SIZE (4 * 0x1000)
+// This can be tuned, must be power of 2 greater than pagesize
+#define BIN_SIZE (1 << 14)
 
 // For our bitvector, 8 bits per uint8_t
 #define BITS_PER_BLOCK (8 * sizeof(uint8_t))
@@ -57,6 +57,7 @@ typedef struct BinHdr BinHdr;
 typedef struct BinHdr {
   BinHdr *next;
   BinHdr *prev;
+  size_t binidx;
   size_t cap;
   size_t sz;
   size_t memsz;
@@ -66,7 +67,6 @@ typedef struct BinHdr {
   // contents
 } BinHdr;
 
-// TODO: Add fastbins
 typedef struct MallocState {
   size_t total_allocations;
   size_t current_bytes;
@@ -75,6 +75,8 @@ typedef struct MallocState {
 
   // Last bin is a linked list for oversized allocations
   BinHdr *bins[NUM_BINS + 1];
+
+  BinHdr *fbin[NUM_BINS];
 } MallocState;
 
 void *memory_calloc(MallocState *ms, size_t nmemb, size_t size);
