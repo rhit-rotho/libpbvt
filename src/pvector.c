@@ -28,7 +28,7 @@ uint8_t pvector_get(PVector *t, uint64_t idx) {
   uint64_t idxn = idx >> BOTTOM_BITS;
   for (int i = MAX_DEPTH - 1; i >= 1; --i) {
     key = (idxn >> (i - 1) * BITS_PER_LEVEL) & CHILD_MASK;
-    if (!v->children[key])
+    if (v->children[key] == 0UL)
       return 0; // Assume memory is 0-initialized
     v = ht_get(ht, v->children[key]);
   }
@@ -41,7 +41,7 @@ PVectorLeaf *pvector_get_leaf(PVector *v, uint64_t idx) {
   uint64_t idxn = idx >> BOTTOM_BITS;
   for (int i = MAX_DEPTH - 1; i >= 1; --i) {
     key = (idxn >> (i - 1) * BITS_PER_LEVEL) & CHILD_MASK;
-    if (!v->children[key])
+    if (v->children[key] == 0UL)
       return 0; // Assume memory is 0-initialized
     v = ht_get(ht, v->children[key]);
   }

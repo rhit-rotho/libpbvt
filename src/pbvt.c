@@ -47,7 +47,7 @@ int uffd_monitor(void *args) {
   printf("uffd_monitor: %d\n", getpid());
 
   struct pollfd pollfds[2];
-  struct uffd_msg msg = {};
+  struct uffd_msg msg = {0};
 
   // Copy, since the stack frame containing the arguments to clone gets freed
   // after our handshake
@@ -90,7 +90,7 @@ int uffd_monitor(void *args) {
 
     if (pollfds[0].revents & POLLIN) {
       if (read(uffd, &msg, sizeof(msg)) < 0)
-        xperror("read(uffd)");
+        continue;
 
       switch (msg.event) {
       case UFFD_EVENT_PAGEFAULT:
@@ -218,8 +218,7 @@ void pbvt_init(void) {
   assert(c == MSG_SUCCESS);
 
   // Create our null node ("null object" pattern if you like OOP)
-  PVector *v =
-      memory_calloc(NULL, 1, MAX(sizeof(PVector), sizeof(PVectorLeaf)));
+  PVector *v = memory_calloc(NULL, 1, sizeof(PVector));
   v->hash = 0UL;
   v->refcount = 1;
   Commit *h = pbvt_commit_create(v, NULL);
@@ -273,7 +272,7 @@ void pbvt_cleanup() {
   for (size_t i = 0; i < pvs->states->cap; ++i) {
     HashBucket *bucket = &pvs->states->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      Commit *c = (Commit *)&bucket->values[j];
+      Commit *c = (Commit *)bucket->values[j];
       pbvt_commit_free(c);
     }
   }
@@ -283,7 +282,7 @@ void pbvt_cleanup() {
   for (size_t i = 0; i < pvs->branches->cap; ++i) {
     HashBucket *bucket = &pvs->branches->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      Branch *b = (Branch *)&bucket->values[j];
+      Branch *b = (Branch *)bucket->values[j];
       pbvt_branch_free(b);
     }
   }
@@ -353,7 +352,7 @@ void pbvt_print(char *path) {
   for (size_t i = 0; i < pvs->branches->cap; ++i) {
     HashBucket *bucket = &pvs->branches->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      Branch *b = (Branch *)&bucket->values[j];
+      Branch *b = (Branch *)bucket->values[j];
       fprintf(f, "\tv%.16lx [\n", b->head->hash);
       if (b->head == pvs->head)
         fprintf(f, "\t\tcolor=\"green\"\n");
@@ -368,7 +367,7 @@ void pbvt_print(char *path) {
   for (size_t i = 0; i < pvs->states->cap; ++i) {
     HashBucket *bucket = &pvs->states->buckets[i];
     for (size_t j = 0; j < bucket->size; ++j) {
-      Commit *c = (Commit *)&bucket->values[j];
+      Commit *c = (Commit *)bucket->values[j];
       if (c->parent)
         fprintf(f, "\tv%.16lx -> v%.16lx;\n", c->hash, c->parent->hash);
       if (ht_get(heads, c->hash))

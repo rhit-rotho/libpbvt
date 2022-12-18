@@ -2,20 +2,18 @@
 #include <string.h>
 
 #include "hashtable.h"
-#include "memory.h"
+#include "mmap_malloc.h"
 
 HashTable *ht_create(void) {
-  HashTable *ht = memory_malloc(NULL, sizeof(HashTable));
+  HashTable *ht = mmap_malloc(sizeof(HashTable));
   ht->cap = HT_INITIAL_CAP;
   ht->size = 0;
-  ht->buckets = memory_calloc(NULL, ht->cap, sizeof(HashBucket));
+  ht->buckets = mmap_calloc(ht->cap, sizeof(HashBucket));
   for (size_t i = 0; i < ht->cap; ++i) {
     ht->buckets[i].size = 0;
     ht->buckets[i].cap = HT_BUCKET_CAP;
-    ht->buckets[i].keys =
-        memory_calloc(NULL, ht->buckets[i].cap, sizeof(uint64_t));
-    ht->buckets[i].values =
-        memory_calloc(NULL, ht->buckets[i].cap, sizeof(void *));
+    ht->buckets[i].keys = mmap_calloc(ht->buckets[i].cap, sizeof(uint64_t));
+    ht->buckets[i].values = mmap_calloc(ht->buckets[i].cap, sizeof(void *));
   }
   return ht;
 }
@@ -33,14 +31,12 @@ void ht_rekey(HashTable *ht) {
   HashTable *hn = &hnt;
   hn->size = 0;
   hn->cap = ht->cap * 2;
-  hn->buckets = memory_calloc(NULL, hn->cap, sizeof(HashBucket));
+  hn->buckets = mmap_calloc(hn->cap, sizeof(HashBucket));
   for (size_t i = 0; i < hn->cap; ++i) {
     hn->buckets[i].size = 0;
     hn->buckets[i].cap = HT_BUCKET_CAP;
-    hn->buckets[i].keys =
-        memory_calloc(NULL, hn->buckets[i].cap, sizeof(uint64_t));
-    hn->buckets[i].values =
-        memory_calloc(NULL, hn->buckets[i].cap, sizeof(void *));
+    hn->buckets[i].keys = mmap_calloc(hn->buckets[i].cap, sizeof(uint64_t));
+    hn->buckets[i].values = mmap_calloc(hn->buckets[i].cap, sizeof(void *));
   }
 
   // reinsert
@@ -50,10 +46,10 @@ void ht_rekey(HashTable *ht) {
       // WARNING: Recursive call, make sure this doesn't reshuffle
       ht_insert(hn, bucket->keys[j], bucket->values[j]);
     }
-    memory_free(NULL, bucket->keys);
-    memory_free(NULL, bucket->values);
+    mmap_free(bucket->keys);
+    mmap_free(bucket->values);
   }
-  memory_free(NULL, ht->buckets);
+  mmap_free(ht->buckets);
   memcpy(ht, hn, sizeof(HashTable));
 }
 
@@ -68,10 +64,8 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
   HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
   if (bucket->size + 1 == bucket->cap) {
     bucket->cap *= 2;
-    bucket->keys =
-        memory_realloc(NULL, bucket->keys, sizeof(uint64_t) * bucket->cap);
-    bucket->values =
-        memory_realloc(NULL, bucket->values, sizeof(void *) * bucket->cap);
+    bucket->keys = mmap_realloc(bucket->keys, sizeof(uint64_t) * bucket->cap);
+    bucket->values = mmap_realloc(bucket->values, sizeof(void *) * bucket->cap);
   }
 
   bucket->keys[bucket->size] = key;
@@ -84,33 +78,32 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
 
 void *ht_remove(HashTable *ht, uint64_t key) {
   HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
-  for (size_t i = 0; i < bucket->size; ++i)
+  for (size_t i = 0; i < bucket->size; ++i) {
     if (bucket->keys[i] == key) {
       void *val = bucket->values[i];
       // Shift all elements back one. This should be fast because of our low
       // loading factor.
-      // for (size_t j = i; j < bucket->size - 1; ++j) {
-      //   bucket->keys[j] = bucket->keys[j + 1];
-      //   bucket->values[j] = bucket->values[j + 1];
-      // }
-      memmove(&bucket->keys[i], &bucket->keys[i + 1],
-              sizeof(uint64_t) * (bucket->size - i));
-      memmove(&bucket->values[i], &bucket->values[i + 1],
-              sizeof(void *) * (bucket->size - i));
+      for (size_t j = i; j < bucket->size - 1; ++j) {
+        bucket->keys[j] = bucket->keys[j + 1];
+        bucket->values[j] = bucket->values[j + 1];
+      }
       bucket->size--;
+      bucket->keys[bucket->size] = 0x5555555555555555;
+      bucket->values[bucket->size] = (void *)0x5555555555555555;
       ht->size--;
       return val;
     }
+  }
   return NULL;
 }
 
 void ht_free(HashTable *ht) {
   for (size_t i = 0; i < ht->cap; ++i) {
-    memory_free(NULL, ht->buckets[i].keys);
-    memory_free(NULL, ht->buckets[i].values);
+    mmap_free(ht->buckets[i].keys);
+    mmap_free(ht->buckets[i].values);
   }
-  memory_free(NULL, ht->buckets);
-  memory_free(NULL, ht);
+  mmap_free(ht->buckets);
+  mmap_free(ht);
 }
 
 size_t ht_size(HashTable *ht) { return ht->size; }

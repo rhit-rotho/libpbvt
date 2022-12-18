@@ -30,16 +30,15 @@
 typedef struct PVector PVector;
 
 typedef struct PVector {
-  // uint64_t level;
-  uint64_t refcount;
   uint64_t hash;
+  uint64_t refcount;
   uint64_t children[NUM_CHILDREN];
 } PVector;
 
 typedef struct PVectorLeaf {
   // uint64_t level;
-  uint64_t refcount;
   uint64_t hash;
+  uint64_t refcount;
   uint8_t *bytes;
 } PVectorLeaf;
 

@@ -1,9 +1,11 @@
+#pragma once
+
 #include <stddef.h>
 #include <stdint.h>
 
 // Basic implementation of hash table with bucketing
 
-#define HT_INITIAL_CAP (16)
+#define HT_INITIAL_CAP (512)
 #define HT_LOADING_FACTOR (2)
 #define HT_BUCKET_CAP HT_LOADING_FACTOR
 
