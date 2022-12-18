@@ -213,3 +213,4 @@ clean:
 
 install: $(PROGRAM)
 	cp libpbvt.so /usr/local/lib/libpbvt.so
+	cp include/*.h /usr/local/include/
