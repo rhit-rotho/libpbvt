@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "hashtable.h"
+
 /*
 
 The main goal of our implementation is to avoid interfering with any client
@@ -42,7 +44,7 @@ mucking around with any internal state in malloc.
 */
 
 // Make sure this matches sizeof(BIN_SIZES)/sizeof(BIN_SIZES[0]) in memory.c
-#define NUM_BINS (6)
+#define NUM_BINS (5)
 // This can be tuned, must be power of 2 greater than pagesize
 #define BIN_SIZE (1 << 14)
 
@@ -57,7 +59,7 @@ typedef struct BinHdr BinHdr;
 typedef struct BinHdr {
   BinHdr *next;
   BinHdr *prev;
-  size_t binidx;
+  size_t idx;
   size_t cap;
   size_t sz;
   size_t memsz;
@@ -76,7 +78,7 @@ typedef struct MallocState {
   // Last bin is a linked list for oversized allocations
   BinHdr *bins[NUM_BINS + 1];
 
-  BinHdr *fbin[NUM_BINS];
+  HashTable *bt;
 } MallocState;
 
 void *memory_calloc(MallocState *ms, size_t nmemb, size_t size);

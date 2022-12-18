@@ -4,11 +4,12 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#include "fasthash.h"
 #include "memory.h"
 
 // Make sure this matches NUM_BINS in memory.h
 // TODO: Add sizeof(PVector), sizeof(PVectorLeaf) as dedicated bin sizes
-const size_t BIN_SIZES[] = {16, 24, 32, 64, 128, 256};
+const size_t BIN_SIZES[] = {8, 16, 24, 64, 128};
 
 MallocState global_heap;
 // Allocate new bin for holding allocations of `size`
@@ -56,12 +57,13 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
 
   ms->current_pages += sz / 0x1000;
 
-  bin->binidx = NUM_BINS;
-  for (int i = 0; i < NUM_BINS; ++i) {
-    if (size <= BIN_SIZES[i]) {
-      bin->binidx = i;
-      break;
-    }
+  if (ms->bt == NULL)
+    ms->bt = ht_create();
+
+  uint64_t key = (uintptr_t)bin;
+  while (key < (uintptr_t)bin + bin->memsz) {
+    ht_insert(ms->bt, fasthash64(&key, sizeof(key), 0), bin);
+    key += 0x1000;
   }
 
   return bin;
@@ -90,21 +92,16 @@ void *memory_realloc(MallocState *ms, void *ptr, size_t size) {
   if (!ms)
     ms = &global_heap;
 
-  size_t idx = 0;
-  BinHdr *bin;
-  // Check, including oversize
-  for (; idx < NUM_BINS + 1; ++idx) {
-    bin = ms->bins[idx];
-    while (bin) {
-      if (bin->contents <= ptr && ptr < (void *)bin + bin->memsz)
-        goto bin_found;
-      bin = bin->next;
-    }
-  }
+  if (ms->bt == NULL)
+    ms->bt = ht_create();
 
-  assert(0 && "No bin found!");
+  uint64_t key = ((uintptr_t)ptr) & ~0xfff;
+  BinHdr *bin = ht_get(ms->bt, fasthash64(&key, sizeof(key), 0));
+  size_t idx = bin->idx;
 
-bin_found:
+  if (bin == NULL)
+    assert(0 && "No bin found!");
+
   void *dstptr = memory_malloc(ms, size);
   if (idx < NUM_BINS)
     memcpy(dstptr, ptr, BIN_SIZES[idx]);
@@ -118,8 +115,6 @@ bin_found:
 }
 
 void *memory_malloc(MallocState *ms, size_t size) {
-  // if(size > 256)
-  // asm("int3");
 #ifdef LIBC_MALLOC
   return malloc(size);
 #endif
@@ -135,9 +130,12 @@ void *memory_malloc(MallocState *ms, size_t size) {
 
   // Binning for oversize allocations
   BinHdr *bin = allocate_bin(ms, size);
-  if (ms->bins[idx])
+  bin->idx = NUM_BINS;
+  if (ms->bins[idx]) {
+    bin->next = ms->bins[idx];
+    bin->prev = ms->bins[idx]->prev;
     ms->bins[idx]->prev = bin;
-  bin->next = ms->bins[NUM_BINS];
+  }
   ms->bins[idx] = bin;
   bin->sz += 1;
 #ifdef MDEBUG
@@ -152,6 +150,12 @@ found_size:
   bin = ms->bins[idx];
   if (!bin) {
     bin = allocate_bin(ms, BIN_SIZES[idx]);
+    bin->idx = idx;
+    if (ms->bins[idx]) {
+      bin->next = ms->bins[idx];
+      bin->prev = ms->bins[idx]->prev;
+      ms->bins[idx]->prev = bin;
+    }
     ms->bins[idx] = bin;
   }
 
@@ -162,7 +166,12 @@ found_size:
 
   if (bin->sz == bin->cap) {
     bin = allocate_bin(ms, BIN_SIZES[idx]);
-    bin->next = ms->bins[idx];
+    bin->idx = idx;
+    if (ms->bins[idx]) {
+      bin->next = ms->bins[idx];
+      bin->prev = ms->bins[idx]->prev;
+      ms->bins[idx]->prev = bin;
+    }
     ms->bins[idx] = bin;
   }
 
@@ -179,9 +188,6 @@ found_size:
   return ptr;
 }
 
-// TODO: Dumb code. Replace with hash lookup from (ptr & page_mask) -> chunk
-// Since we are also writing our client code, we could also call free with the
-// size of our allocation
 void memory_free(MallocState *ms, void *ptr) {
 #ifdef LIBC_MALLOC
   return free(ptr);
@@ -193,56 +199,30 @@ void memory_free(MallocState *ms, void *ptr) {
   if (ptr == NULL)
     return;
 
+  if (ms->bt == NULL)
+    ms->bt = ht_create();
+
   BinHdr *bin;
   size_t idx;
 
-  for (idx = 0; idx < NUM_BINS; ++idx) {
-    bin = ms->fbin[idx];
-    if (!bin)
-      continue;
-    if (bin->contents <= ptr && ptr < (void *)bin + bin->memsz)
-      goto bin_found;
+  uint64_t key = ((uintptr_t)ptr) & ~0xfff;
+  bin = ht_get(ms->bt, fasthash64(&key, sizeof(key), 0));
+  idx = bin->idx;
+
+  assert(bin && "WARNING: No bin found!");
+
+  if (idx < NUM_BINS) {
+    size_t i = (ptr - bin->contents) / BIN_SIZES[idx];
+    assert(bv_is_set(bin->bitmap, i));
+    bv_unset(bin->bitmap, i);
+    memset(ptr, 0x55, BIN_SIZES[idx]);
   }
 
-  for (idx = 0; idx < NUM_BINS; ++idx) {
-    bin = ms->bins[idx];
-    while (bin) {
-      if (bin->contents <= ptr && ptr < (void *)bin + bin->memsz)
-        goto bin_found;
-      bin = bin->next;
-    }
-  }
-
-  // Check oversize allocations
-  bin = ms->bins[NUM_BINS];
-  while (bin) {
-    if (bin->contents == ptr)
-      goto coalesce;
-    bin = bin->next;
-  }
-
-  // // Otherwise assume bin is aligned to BIN_SIZE
-  // bin = (BinHdr *)((uintptr_t)ptr & ~(BIN_SIZE - 1));
-  // goto bin_found;
-
-  assert(0 && "No bin found!");
-
-  assert(bin->contents <= ptr && ptr < (void *)bin + bin->memsz);
-bin_found:
-  if (idx < NUM_BINS)
-    ms->fbin[idx] = bin;
-
-  size_t i = (ptr - bin->contents) / BIN_SIZES[bin->binidx];
-  assert(bv_is_set(bin->bitmap, i));
-  bv_unset(bin->bitmap, i);
-  memset(ptr, 0x55, BIN_SIZES[bin->binidx]);
-
-coalesce:
   ms->current_allocations -= 1;
-  if (bin->binidx == NUM_BINS)
+  if (idx == NUM_BINS)
     ms->current_bytes -= bin->memsz;
   else
-    ms->current_bytes -= BIN_SIZES[bin->binidx];
+    ms->current_bytes -= BIN_SIZES[idx];
 
   bin->sz -= 1;
   // We can't coalesce bins if we're using a persistent heap, since if a page
@@ -253,11 +233,16 @@ coalesce:
       bin->prev->next = bin->next;
     if (bin->next)
       bin->next->prev = bin->prev;
-    if (bin->binidx < NUM_BINS && ms->bins[bin->binidx] == bin)
-      ms->bins[bin->binidx] = bin->next;
-    if (ms->fbin[bin->binidx] == bin)
-      ms->fbin[bin->binidx] = NULL;
+    if (ms->bins[idx] == bin)
+      ms->bins[idx] = bin->next;
     ms->current_pages -= bin->memsz / 0x1000;
+
+    uint64_t key = (uintptr_t)bin;
+    while (key < (uintptr_t)bin + bin->memsz) {
+      ht_remove(ms->bt, fasthash64(&key, sizeof(key), 0));
+      key += 0x1000;
+    }
+
     if (munmap(bin, bin->memsz) == -1)
       assert(0 && "munmap failed!");
     // printf("// Returned bin %p to OS\n", bin);
