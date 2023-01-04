@@ -33,9 +33,6 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
 
   BinHdr *bin = mmap(NULL, sz, PROT_READ | PROT_WRITE,
                      MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-  // HACK: Ugly, should be handled inside pbvt.c
-  if (ms != &global_heap)
-    pbvt_track_range(bin, sz);
   if (bin == MAP_FAILED)
     perror("mmap");
   bin->next = NULL;
@@ -65,6 +62,11 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
     ht_insert(ms->bt, fasthash64(&key, sizeof(key), 0), bin);
     key += 0x1000;
   }
+
+  // TODO: Replace with callbacks inside MallocState, e.g. on_malloc, on_mmap,
+  // on_free, etc. Then this can be handled correctly inside of pbvt.c
+  if (ms != &global_heap)
+    pbvt_track_range(bin, sz);
 
   return bin;
 }

@@ -198,6 +198,9 @@ void pbvt_init(void) {
   clone_stk = mmap(NULL, STACK_SIZE, PROT_READ | PROT_WRITE,
                    MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 
+  if (clone_stk == MAP_FAILED)
+    xperror("mmap");
+
   int p2c[2];
   int c2p[2];
   pipe(p2c);
