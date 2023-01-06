@@ -73,10 +73,6 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
 
 // TODO: This should allocate nmemb all from the same bin
 void *memory_calloc(MallocState *ms, size_t nmemb, size_t size) {
-#ifdef LIBC_MALLOC
-  return calloc(nmemb, size);
-#endif
-
   if (!ms)
     ms = &global_heap;
 
@@ -87,10 +83,6 @@ void *memory_calloc(MallocState *ms, size_t nmemb, size_t size) {
 }
 
 void *memory_realloc(MallocState *ms, void *ptr, size_t size) {
-#ifdef LIBC_MALLOC
-  return realloc(ptr, size);
-#endif
-
   if (!ms)
     ms = &global_heap;
 
@@ -117,10 +109,6 @@ void *memory_realloc(MallocState *ms, void *ptr, size_t size) {
 }
 
 void *memory_malloc(MallocState *ms, size_t size) {
-#ifdef LIBC_MALLOC
-  return malloc(size);
-#endif
-
   if (!ms)
     ms = &global_heap;
 
@@ -161,20 +149,16 @@ found_size:
     ms->bins[idx] = bin;
   }
 
-  // Find bin with room for more allocations, keep a reference to the last
-  // non-NULL bin.
-  while (!(bin->sz < bin->cap) && bin->next)
-    bin = bin->next;
-
-  if (bin->sz == bin->cap) {
-    bin = allocate_bin(ms, BIN_SIZES[idx]);
-    bin->idx = idx;
+  // Ensure sure the first bin always has enough room for more allocations
+  if (bin->sz + 2 >= bin->cap) {
+    BinHdr *nbin = allocate_bin(ms, BIN_SIZES[idx]);
+    nbin->idx = idx;
     if (ms->bins[idx]) {
-      bin->next = ms->bins[idx];
-      bin->prev = ms->bins[idx]->prev;
-      ms->bins[idx]->prev = bin;
+      nbin->next = ms->bins[idx];
+      nbin->prev = ms->bins[idx]->prev;
+      ms->bins[idx]->prev = nbin;
     }
-    ms->bins[idx] = bin;
+    ms->bins[idx] = nbin;
   }
 
   size_t i = bv_find_first_zero(bin->bitmap, bin->cap);
@@ -191,10 +175,6 @@ found_size:
 }
 
 void memory_free(MallocState *ms, void *ptr) {
-#ifdef LIBC_MALLOC
-  return free(ptr);
-#endif
-
   if (!ms)
     ms = &global_heap;
 
@@ -257,10 +237,6 @@ void memory_free(MallocState *ms, void *ptr) {
 }
 
 void print_malloc_stats(MallocState *ms) {
-#ifdef LIBC_MALLOC
-  malloc_stats();
-  return;
-#endif
   if (!ms)
     ms = &global_heap;
 
