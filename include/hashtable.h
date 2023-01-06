@@ -5,16 +5,13 @@
 
 // Basic implementation of hash table with bucketing
 
-#define HT_INITIAL_CAP (512)
-#define HT_LOADING_FACTOR (2)
-#define HT_BUCKET_CAP HT_LOADING_FACTOR
+#define HT_INITIAL_CAP (0x4000)
+#define HT_BUCKET_CAP (16)
 
 typedef struct HashBucket {
-  uint64_t *keys;
-  void **values;
-
-  size_t cap;
   size_t size;
+  uint64_t keys[HT_BUCKET_CAP];
+  void *values[HT_BUCKET_CAP];
 } HashBucket;
 
 typedef struct HashTable {
