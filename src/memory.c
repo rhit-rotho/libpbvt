@@ -288,19 +288,22 @@ int bv_is_set(uint8_t *bv, uint64_t key) {
   return (bv[key / BITS_PER_BLOCK] >> (key % BITS_PER_BLOCK)) & 1;
 }
 
-// TODO: Dumb code, can expand comparisons to be 8-bytes at a time
 size_t bv_find_first_zero(uint8_t *bv, size_t cap) {
-  for (size_t i = 0; i < cap; ++i) {
-    if (bv[i] == ((1UL << BITS_PER_BLOCK) - 1))
-      continue;
+  size_t i = 0;
+  for (; i < (cap & ~7); i += 8)
+    if (*(uint64_t *)&bv[i] != UINT64_MAX)
+      break;
 
-    uint8_t val = bv[i];
-    size_t j = 0;
-    while (val & 1) {
-      val >>= 1;
-      j += 1;
-    }
-    return i * BITS_PER_BLOCK + j;
+  for (; i < cap; i += 1)
+    if (bv[i] != UINT8_MAX)
+      break;
+
+  uint8_t val = bv[i];
+  size_t j = i * BITS_PER_BLOCK;
+  while (val & 1) {
+    val >>= 1;
+    j += 1;
   }
-  return -1;
+
+  return j;
 }
