@@ -48,9 +48,16 @@ PVectorLeaf *pvector_get_leaf(PVector *v, uint64_t idx) {
   return (PVectorLeaf *)v;
 }
 
+// TODO: Incorrect indexing for some values of BOTTOM_BITS and BITS_PER_LEVEL
 PVector *pvector_update_n_helper(PVector *v, uint64_t depth, uint64_t idx,
                                  uint8_t *buf, size_t n) {
   if (depth == 0) {
+    // printf("d: 0, buf: %p [ ", buf);
+    // for (int i = 0; i < 0x40; ++i) {
+    //   printf("%.2x ", buf[i]);
+    // }
+    // printf("]\n");
+
     uint64_t hash = fasthash64(buf, n, 0);
     PVectorLeaf *l = (PVectorLeaf *)v;
     if (ht_get(ht, hash) != NULL)
@@ -75,8 +82,12 @@ PVector *pvector_update_n_helper(PVector *v, uint64_t depth, uint64_t idx,
 
   int cloned = 0; // Do we have an exclusive copy?
   uint64_t rbytes = n;
-  for (uint64_t i = 0; i < n; i += tn) {
-    PVector *u = (PVector *)ht_get(ht, v->children[k]);
+
+  // printf("%.16lx: d: %lx k: %lx p: %lx tn: %lx n: %lx (next: %.16lx)\n", idx,
+  //        depth, k, CHILD_MASK, tn, n, idx + tn);
+  for (uint64_t i = 0; k < NUM_CHILDREN && i < n; i += tn) {
+    assert(k < NUM_CHILDREN);
+    PVector *u = ht_get(ht, v->children[k]);
     u = pvector_update_n_helper(u, depth - 1, idx + i, buf + i,
                                 MIN(tn, rbytes));
 

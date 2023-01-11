@@ -9,7 +9,8 @@
 
 // Make sure this matches NUM_BINS in memory.h
 // TODO: Add sizeof(PVector), sizeof(PVectorLeaf) as dedicated bin sizes
-const size_t BIN_SIZES[] = {8, 16, 24, 64, 128};
+const size_t BIN_BITS[] = {2, 3, 4, 5, 6, 7};
+const size_t BIN_SIZES[] = {4, 8, 16, 32, 64, 128};
 
 MallocState global_heap;
 // Allocate new bin for holding allocations of `size`
@@ -161,6 +162,8 @@ found_size:
     ms->bins[idx] = nbin;
   }
 
+  assert(bin->sz + 1 <= bin->cap);
+
   size_t i = bv_find_first_zero(bin->bitmap, bin->cap);
   bv_set(bin->bitmap, i);
   bin->sz += 1;
@@ -194,7 +197,7 @@ void memory_free(MallocState *ms, void *ptr) {
   assert(bin && "WARNING: No bin found!");
 
   if (idx < NUM_BINS) {
-    size_t i = (ptr - bin->contents) / BIN_SIZES[idx];
+    size_t i = (ptr - bin->contents) >> BIN_BITS[idx];
     assert(bv_is_set(bin->bitmap, i));
     bv_unset(bin->bitmap, i);
     memset(ptr, 0x55, BIN_SIZES[idx]);
@@ -227,7 +230,6 @@ void memory_free(MallocState *ms, void *ptr) {
 
     if (munmap(bin, bin->memsz) == -1)
       assert(0 && "munmap failed!");
-    // printf("// Returned bin %p to OS\n", bin);
   }
 
 #ifdef MDEBUG

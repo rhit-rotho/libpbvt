@@ -68,10 +68,9 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
   assert(!ht_get(ht, key));
 
   HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
-  if (bucket->size + 1 >= HT_BUCKET_CAP) {
+  while (bucket->size + 1 >= HT_BUCKET_CAP) {
     ht_rekey(ht);
     bucket = &ht->buckets[key & (ht->cap - 1)];
-    assert(bucket->size + 1 < HT_BUCKET_CAP);
   }
 
   bucket->keys[bucket->size] = key;

@@ -20,7 +20,7 @@
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define CLAMP(x, a, b) MIN(MAX(x, a), b)
 
-#define STACK_SIZE (8 * 1024 * 1024)
+#define STACK_SIZE (8 * 0x1000 * 0x1000)
 #define HEAP_SIZE (0x1000)
 #define UNUSED(x) (void)(x)
 
@@ -542,6 +542,12 @@ void pbvt_track_range(void *range, size_t n) {
   ht_insert(pvs->states, h->hash, h);
   pvs->head = h;
 
+  // for (size_t i = 0; i < n; ++i)
+  //   if (pvector_get(v, (uint64_t)range + i) != ((uint8_t *)range)[i])
+  //     printf("vec[%p] = %.2x != range[%p] = %.2x\n", range + i,
+  //            pvector_get(v, (uint64_t)range + i), range + i,
+  //            ((uint8_t *)range)[i]);
+
   PVectorLeaf *l;
   for (size_t i = 0; i < n; i += NUM_BOTTOM) {
     l = ht_get(ht, fasthash64(range + i, NUM_BOTTOM, 0));
@@ -610,11 +616,19 @@ Commit *pbvt_commit_internal(int uffd) {
       l->bytes = (uint8_t *)r->address + i;
     }
 
-    pvector_gc(v, MAX_DEPTH - 1);
+    // HACK: Fix ref-counting for v
+    // pvector_gc(v, MAX_DEPTH - 1);
     v = u;
   }
   Commit *nh = pbvt_commit_create(v, h);
-  ht_insert(pvs->states, nh->hash, nh);
+  if (!ht_get(pvs->states, nh->hash)) {
+    ht_insert(pvs->states, nh->hash, nh);
+  } else {
+    uint64_t hash = nh->hash;
+    pbvt_commit_free(nh);
+    nh = ht_get(pvs->states, hash);
+    return nh;
+  }
 
   // If we're already on a branch && we modified the current head of a branch,
   // update the current head to our new commit, otherwise we're in a "detached"

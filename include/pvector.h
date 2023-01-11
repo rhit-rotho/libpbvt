@@ -5,7 +5,7 @@
 // For 4-level paging (see "Paging" in Volume 3 of the Intel 64 and IA-32
 // Architectures Software Developer's manual)
 #define NUM_BITS (48)
-#define BITS_PER_LEVEL (3)
+#define BITS_PER_LEVEL (6)
 #define BOTTOM_BITS (6)
 //#define BITS_PER_LEVEL (9)
 //#define BOTTOM_BITS (12)
