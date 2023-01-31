@@ -4,7 +4,7 @@
 #include "pvector.h"
 #include "queue.h"
 
-HashTable *ht;
+extern HashTable *ht;
 
 typedef struct Range {
   void *address;

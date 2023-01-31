@@ -8,7 +8,7 @@
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
-extern HashTable *ht;
+HashTable *ht;
 
 PVector *pvector_clone(PVector *v) {
   PVector *u = memory_calloc(NULL, 1, sizeof(PVector));
