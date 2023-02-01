@@ -542,15 +542,10 @@ void pbvt_track_range(void *range, size_t n) {
   ht_insert(pvs->states, h->hash, h);
   pvs->head = h;
 
-  // for (size_t i = 0; i < n; ++i)
-  //   if (pvector_get(v, (uint64_t)range + i) != ((uint8_t *)range)[i])
-  //     printf("vec[%p] = %.2x != range[%p] = %.2x\n", range + i,
-  //            pvector_get(v, (uint64_t)range + i), range + i,
-  //            ((uint8_t *)range)[i]);
-
   PVectorLeaf *l;
   for (size_t i = 0; i < n; i += NUM_BOTTOM) {
     l = ht_get(ht, fasthash64(range + i, NUM_BOTTOM, 0));
+    assert(l && "Hashed contents don't match any existing node");
     // Is this region in our malloc'd region, or backed by the memory it
     // represents? If not, we can make it so and save some space
     if (!TAGGED(l->bytes))
@@ -616,8 +611,7 @@ Commit *pbvt_commit_internal(int uffd) {
       l->bytes = (uint8_t *)r->address + i;
     }
 
-    // HACK: Fix ref-counting for v
-    // pvector_gc(v, MAX_DEPTH - 1);
+    pvector_gc(v, MAX_DEPTH - 1);
     v = u;
   }
   Commit *nh = pbvt_commit_create(v, h);

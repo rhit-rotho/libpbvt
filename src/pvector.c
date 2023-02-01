@@ -48,17 +48,10 @@ PVectorLeaf *pvector_get_leaf(PVector *v, uint64_t idx) {
   return (PVectorLeaf *)v;
 }
 
-// TODO: Incorrect indexing for some values of BOTTOM_BITS and BITS_PER_LEVEL
 PVector *pvector_update_n_helper(PVector *v, uint64_t depth, uint64_t idx,
                                  uint8_t *buf, size_t n) {
   if (depth == 0) {
-    // printf("d: 0, buf: %p [ ", buf);
-    // for (int i = 0; i < 0x40; ++i) {
-    //   printf("%.2x ", buf[i]);
-    // }
-    // printf("]\n");
-
-    uint64_t hash = fasthash64(buf, n, 0);
+    uint64_t hash = fasthash64(buf, NUM_BOTTOM, 0);
     PVectorLeaf *l = (PVectorLeaf *)v;
     if (ht_get(ht, hash) != NULL)
       return (PVector *)ht_get(ht, hash);
@@ -79,17 +72,23 @@ PVector *pvector_update_n_helper(PVector *v, uint64_t depth, uint64_t idx,
   for (uint64_t i = 0; i < depth - 1; ++i)
     tn *= NUM_CHILDREN;
   k = (idx >> ((depth - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) & CHILD_MASK;
+  uint64_t mk =
+      ((idx + n - 1) >> ((depth - 1) * BITS_PER_LEVEL + BOTTOM_BITS)) &
+      CHILD_MASK;
 
-  int cloned = 0; // Do we have an exclusive copy?
-  uint64_t rbytes = n;
+  // Do we have an exclusive copy?
+  int cloned = 0;
 
-  // printf("%.16lx: d: %lx k: %lx p: %lx tn: %lx n: %lx (next: %.16lx)\n", idx,
-  //        depth, k, CHILD_MASK, tn, n, idx + tn);
-  for (uint64_t i = 0; k < NUM_CHILDREN && i < n; i += tn) {
+  uint64_t align = ((idx + tn) & ~(tn - 1)) - idx;
+  uint64_t inc = tn;
+  if (align > 0)
+    inc = align;
+
+  for (uint64_t i = 0; k < mk + 1; k += 1) {
     assert(k < NUM_CHILDREN);
     PVector *u = ht_get(ht, v->children[k]);
     u = pvector_update_n_helper(u, depth - 1, idx + i, buf + i,
-                                MIN(tn, rbytes));
+                                MIN(inc, n - i));
 
     if (v->children[k] != u->hash) {
       if (!cloned) {
@@ -99,8 +98,8 @@ PVector *pvector_update_n_helper(PVector *v, uint64_t depth, uint64_t idx,
       v->children[k] = u->hash;
     }
 
-    k++;
-    rbytes -= tn;
+    i += inc;
+    inc = tn;
   }
 
   if (cloned) {
@@ -115,7 +114,6 @@ PVector *pvector_update_n_helper(PVector *v, uint64_t depth, uint64_t idx,
   return v;
 }
 
-// TODO: This can be much more optimized
 PVector *pvector_update_n(PVector *v, uint64_t idx, uint8_t *buf, size_t n) {
   assert(idx + n <= MAX_INDEX);
 
