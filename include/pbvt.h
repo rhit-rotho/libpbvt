@@ -42,7 +42,7 @@ PUBLIC void pbvt_gc_n(size_t n);
 PUBLIC size_t pbvt_size();
 
 PUBLIC void pbvt_print(char *path);
-PUBLIC void pbvt_track_range(void *range, size_t n);
+PUBLIC void pbvt_track_range(void *range, size_t n, int perms);
 
 PUBLIC void pbvt_update_n(uint64_t key, void *buf, size_t len);
 
@@ -76,3 +76,6 @@ void pbvt_branch_free(Branch *b);
 void pbvt_write_protect(Range *r, uint8_t);
 void pbvt_write_protect_internal(int uffd, Range *r, uint8_t dirty);
 Commit *pbvt_commit_internal(int uffd);
+
+void pbvt_relocate_away_internal(Range *r);
+void pbvt_relocate_into_internal(Range *r, PVector *v);

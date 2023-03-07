@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
 
   // track changes
   printf("Adding range %p-%p...", test, test + test_sz);
-  pbvt_track_range(test, test_sz);
+  pbvt_track_range(test, test_sz, PROT_READ | PROT_WRITE);
   printf("done\n");
 
   Commit *c = pbvt_commit();

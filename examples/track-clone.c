@@ -11,12 +11,11 @@
 #define STACK_SIZE (8 * 0x1000)
 
 int child(void *arg) {
-  printf("Hello, world!\n");
-  uint64_t counter = 0;
-  for (;;)
-    counter = ~counter;
-
-  UNUSED(arg);
+  uint64_t *counter = arg;
+  *counter = 0;
+  for (int i = 0; i < 0x100000; ++i)
+    *counter = i;
+  write(1, "Goodbye!\n", 9);
 }
 
 int pid;
@@ -37,16 +36,20 @@ int main(int argc, char **argv) {
                          MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   if (child_stk == MAP_FAILED)
     perror("mmap");
-  printf("Tracking range...");
-  pbvt_track_range(child_stk, STACK_SIZE);
-  pbvt_commit();
+  void *counter = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE,
+                       MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+  if (counter == MAP_FAILED)
+    perror("mmap");
+  printf("%d: Tracking range... %p ", getpid(), counter);
+  pbvt_track_range(counter, 0x1000, PROT_READ | PROT_WRITE);
   printf("done.\n");
-  pid = clone(child, child_stk + STACK_SIZE, CLONE_VM, NULL);
+  pbvt_commit();
+  pid = clone(child, child_stk + STACK_SIZE, CLONE_VM, counter);
 
   for (;;) {
-    pbvt_stats();
+    usleep(100);
+    // pbvt_stats();
     pbvt_commit();
-    usleep(100000);
   }
 
   pbvt_cleanup();

@@ -6,6 +6,7 @@
 #include <malloc.h>
 #include <poll.h>
 #include <sched.h>
+#include <signal.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -30,6 +31,8 @@
 #define MSG_SHUTDOWN (0x43)
 #define MSG_SUCCESS (0x44)
 #define MSG_COMMIT (0x45)
+#define MSG_HANDLE_FAULT (0x46)
+#define MSG_FAILURE (0x47)
 
 #define xperror(x)                                                             \
   do {                                                                         \
@@ -43,7 +46,62 @@ typedef struct uffd_args {
   int outfd;
 } uffd_args;
 
+void *clone_stk;
+int pipefd[2];
+MallocState *persistent_heap;
+PVectorState *pvs;
+
+void *alt_stk;
+
+// TODO: This needs either locking or IPC, since each thread will end up here
+// when segfaulting.
+void segv_monitor(int signo, siginfo_t *si, void *ctx) {
+  UNUSED(ctx);
+  assert(signo == SIGSEGV);
+
+  void *addr = si->si_addr;
+  char c = MSG_HANDLE_FAULT;
+  write(pipefd[0], &c, 1);
+  write(pipefd[0], &addr, sizeof(addr));
+  read(pipefd[1], &c, 1);
+  assert(c == MSG_SUCCESS);
+  return;
+}
+
+// Move any bytes into active range if possible (i.e., stop shadowing memory)
+void pbvt_relocate_into_internal(Range *r, PVector *v) {
+  for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
+    PVectorLeaf *l = pvector_get_leaf(v, (uint64_t)r->address + i);
+    if (!l)
+      continue;
+
+    if (fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0) != l->hash)
+      memcpy((uint8_t *)r->address + i, UNTAG(l->bytes), NUM_BOTTOM);
+    if (!TAGGED(l->bytes))
+      continue;
+    memory_free(NULL, UNTAG(l->bytes));
+    l->bytes = (uint8_t *)r->address + i;
+  }
+}
+
+// Similar to write-protect, move any bytes out of active range
+void pbvt_relocate_away_internal(Range *r) {
+  for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
+    uint64_t hash = fasthash64(r->address + i, NUM_BOTTOM, 0);
+    PVectorLeaf *l = ht_get(ht, hash);
+    // Move any relevant nodes out of the way so they don't get
+    // clobbered by writes to this page
+    void *arrp = UNTAG(l->bytes);
+    if (r->address <= arrp && arrp < r->address + r->len) {
+      uint8_t *back = memory_calloc(NULL, NUM_BOTTOM, sizeof(uint8_t));
+      memcpy(back, arrp, NUM_BOTTOM);
+      l->bytes = TAG(back);
+    }
+  }
+}
+
 int uffd_monitor(void *args) {
+  UNUSED(args);
   printf("uffd_monitor: %d\n", getpid());
 
   struct pollfd pollfds[2];
@@ -105,19 +163,7 @@ int uffd_monitor(void *args) {
 
           assert(r);
 
-          for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
-            uint64_t hash = fasthash64(r->address + i, NUM_BOTTOM, 0);
-            PVectorLeaf *l = ht_get(ht, hash);
-            // Move any relevant nodes out of the way so they don't get
-            // clobbered by writes to this page
-            void *arrp = UNTAG(l->bytes);
-            if (r->address <= arrp && arrp < r->address + r->len) {
-              uint8_t *back = memory_calloc(NULL, NUM_BOTTOM, sizeof(uint8_t));
-              memcpy(back, arrp, NUM_BOTTOM);
-              l->bytes = TAG(back);
-            }
-          }
-
+          pbvt_relocate_away_internal(r);
           pbvt_write_protect_internal(uffd, r, 1);
         }
         break;
@@ -141,8 +187,34 @@ int uffd_monitor(void *args) {
         uffd_register.range.start = (__u64)range;
         uffd_register.range.len = n;
         uffd_register.mode = UFFDIO_REGISTER_MODE_WP;
-        if (ioctl(uffd, UFFDIO_REGISTER, &uffd_register))
-          xperror("ioctl(uffd, UFFDIO_REGISTER)");
+        ioctl(uffd, UFFDIO_REGISTER, &uffd_register);
+        // xperror("ioctl(uffd, UFFDIO_REGISTER)");
+
+        c = MSG_SUCCESS;
+        write(outfd, &c, 1);
+        break;
+      }
+      case MSG_HANDLE_FAULT: {
+        void *addr;
+        read(infd, &addr, sizeof(addr));
+
+        Range *r = NULL;
+        for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
+          r = queue_peekleft(pvs->ranges, i);
+          if (r->address <= addr && addr < r->address + r->len)
+            break;
+          r = NULL;
+        }
+
+        if (!r) {
+          c = MSG_FAILURE;
+          printf("Couldn't find range!\n");
+          write(outfd, &c, 1);
+          break;
+        }
+
+        pbvt_relocate_away_internal(r);
+        pbvt_write_protect_internal(uffd, r, 1);
 
         c = MSG_SUCCESS;
         write(outfd, &c, 1);
@@ -184,11 +256,6 @@ cleanup:
   exit(EXIT_SUCCESS);
 }
 
-void *clone_stk;
-int pipefd[2];
-MallocState *persistent_heap;
-PVectorState *pvs;
-
 void pbvt_init(void) {
   pvs = memory_calloc(NULL, 1, sizeof(PVectorState));
   pvs->states = ht_create();
@@ -215,6 +282,24 @@ void pbvt_init(void) {
   if (clone(uffd_monitor, clone_stk + STACK_SIZE, CLONE_VM, &args) == -1)
     xperror("clone");
 
+  alt_stk = mmap(NULL, STACK_SIZE, PROT_READ | PROT_WRITE,
+                 MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+  if (alt_stk == MAP_FAILED)
+    xperror("mmap");
+
+  stack_t ss = {0};
+  ss.ss_size = STACK_SIZE;
+  ss.ss_sp = alt_stk;
+  if (sigaltstack(&ss, NULL) < 0)
+    xperror("sigaltstack");
+
+  struct sigaction act = {0};
+  act.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+  act.sa_sigaction = segv_monitor;
+  sigemptyset(&act.sa_mask);
+  if (sigaction(SIGSEGV, &act, NULL) < 0)
+    xperror("sigaction(SIGSEGV)");
+
   char c = MSG_HANDSHAKE;
   write(pipefd[0], &c, 1);
   read(pipefd[1], &c, 1);
@@ -238,7 +323,7 @@ void pbvt_init(void) {
                          MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   if (persistent_heap == MAP_FAILED)
     xperror("mmap");
-  pbvt_track_range(persistent_heap, HEAP_SIZE);
+  pbvt_track_range(persistent_heap, HEAP_SIZE, PROT_READ | PROT_WRITE);
   return;
 }
 
@@ -531,7 +616,7 @@ void pbvt_stats() {
 
 uint64_t pbvt_capacity(void) { return MAX_INDEX; }
 
-void pbvt_track_range(void *range, size_t n) {
+void pbvt_track_range(void *range, size_t n, int perms) {
   // TODO: Zero-pad, handle this correctly
   assert((uint64_t)range % sysconf(_SC_PAGESIZE) == 0);
   assert(n % NUM_BOTTOM == 0);
@@ -542,6 +627,7 @@ void pbvt_track_range(void *range, size_t n) {
   ht_insert(pvs->states, h->hash, h);
   pvs->head = h;
 
+  // See pbvt_relocate_into_internal
   PVectorLeaf *l;
   for (size_t i = 0; i < n; i += NUM_BOTTOM) {
     l = ht_get(ht, fasthash64(range + i, NUM_BOTTOM, 0));
@@ -566,6 +652,7 @@ void pbvt_track_range(void *range, size_t n) {
     Range *r = memory_calloc(NULL, 1, sizeof(Range));
     r->address = range + i;
     r->len = 0x1000;
+    r->perms = perms;
     pbvt_write_protect(r, 0);
     queue_push(pvs->ranges, r);
   }
@@ -661,17 +748,26 @@ void pbvt_write_protect_internal(int uffd, Range *r, uint8_t dirty) {
   struct uffdio_writeprotect wp;
   wp.range.start = (uint64_t)r->address;
   wp.range.len = r->len;
+  int prot;
 
   if (dirty) {
     r->dirty = 1;
     wp.mode = 0;
+    prot = r->perms;
   } else {
     r->dirty = 0;
     wp.mode = UFFDIO_WRITEPROTECT_MODE_WP;
+    prot = r->perms & ~PROT_WRITE;
   }
 
-  if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp))
-    xperror("ioctl(uffd, UFFDIO_WRITEPROTECT)");
+  if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp) == 0)
+    return;
+
+  if (mprotect(r->address, r->len, prot) < 0)
+    xperror("mprotect");
+  // TODO: This may not be necessary
+  if (msync(r->address, r->len, MS_SYNC) < 0)
+    xperror("msync");
 }
 
 void pbvt_write_protect(Range *r, uint8_t dirty) {
@@ -699,19 +795,7 @@ void pbvt_checkout(Commit *commit) {
   for (size_t n = 0; n < queue_size(pvs->ranges); ++n) {
     Range *r = queue_peekleft(pvs->ranges, n);
 
-    for (size_t i = 0; i < r->len; i += NUM_BOTTOM) {
-      PVectorLeaf *l = pvector_get_leaf(v, (uint64_t)r->address + i);
-      if (!l)
-        continue;
-
-      if (fasthash64((uint8_t *)r->address + i, NUM_BOTTOM, 0) != l->hash)
-        memcpy((uint8_t *)r->address + i, UNTAG(l->bytes), NUM_BOTTOM);
-      if (!TAGGED(l->bytes))
-        continue;
-      memory_free(NULL, UNTAG(l->bytes));
-      l->bytes = (uint8_t *)r->address + i;
-    }
-
+    pbvt_relocate_into_internal(r, v);
     // Get back out of transient state, we assume any page faults from the
     // memcpy are resolved by uffd_monitor.
     pbvt_write_protect(r, 0);
