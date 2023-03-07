@@ -4,6 +4,10 @@
 #include "pvector.h"
 #include "queue.h"
 
+// Commits are abstractly represented as linked list to tuples of program states
+// memory = StaticArray<uint8_t, 0, 2**48>;
+// pbvt = Array<LinkedList<Memory>>, cur_idx = Integer, 0 <= cur_idx < |pbvt|
+
 extern HashTable *ht;
 
 typedef struct Range {
@@ -44,14 +48,28 @@ PUBLIC size_t pbvt_size();
 PUBLIC void pbvt_print(char *path);
 PUBLIC void pbvt_track_range(void *range, size_t n, int perms);
 
+//@ requires buf != null
+//@ requires buf + len < |memory|
 PUBLIC void pbvt_update_n(uint64_t key, void *buf, size_t len);
 
+//@ requires pbvt != []
+//@ ensures dirty_ranges = []
+//@ ensures clean_ranges = #clean_ranges || #dirty_ranges
+//@ ensures pbvt[cur_idx] = [memory, #pbvt[cur_idx]]
 PUBLIC Commit *pbvt_commit();
+
+//@ requires commit != null
+//@ requires 
 PUBLIC void pbvt_checkout(Commit *commit);
 
+
 PUBLIC Commit *pbvt_commit_parent(Commit *commit);
+
+//@ requires pbvt != []
+//@ ensures \result = pbvt[cur_idx][0]->hash
 PUBLIC Commit *pbvt_head();
 
+//@ ensures pbvt[|pbvt|] = {#memory}
 PUBLIC void pbvt_branch_commit(char *name);
 PUBLIC void pbvt_branch_checkout(char *name);
 
@@ -65,7 +83,7 @@ PUBLIC void pbvt_free(void *ptr);
 
 PUBLIC void pbvt_stats();
 
-// private operations
+// Private operations
 void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level);
 void pbvt_debug(void);
 
