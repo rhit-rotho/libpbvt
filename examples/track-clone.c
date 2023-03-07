@@ -13,7 +13,7 @@
 int child(void *arg) {
   uint64_t *counter = arg;
   *counter = 0;
-  for (int i = 0; i < 0x100000; ++i)
+  for (uint64_t i = 0;; ++i)
     *counter = i;
   write(1, "Goodbye!\n", 9);
 }
@@ -46,9 +46,9 @@ int main(int argc, char **argv) {
   pbvt_commit();
   pid = clone(child, child_stk + STACK_SIZE, CLONE_VM, counter);
 
-  for (;;) {
-    usleep(100);
-    // pbvt_stats();
+  for(int i =0 ; i < 0x10; ++i) {
+    sleep(1);
+    pbvt_stats();
     pbvt_commit();
   }
 

@@ -115,8 +115,10 @@ int uffd_monitor(void *args) {
 
   int uffd =
       syscall(SYS_userfaultfd, O_NONBLOCK | O_CLOEXEC | UFFD_USER_MODE_ONLY);
-  if (uffd < 0)
-    xperror("userfaultfd");
+  if (uffd < 0) {
+    uffd = open("/dev/zero", O_RDONLY);
+    goto skip_uffd;
+  }
 
   struct uffdio_api uffd_api = {};
   uffd_api.api = UFFD_API;
@@ -124,6 +126,7 @@ int uffd_monitor(void *args) {
   if (ioctl(uffd, UFFDIO_API, &uffd_api))
     xperror("ioctl");
 
+skip_uffd:
   pollfds[0].fd = uffd;
   pollfds[0].events = POLLIN | POLLERR;
   pollfds[1].fd = infd;
@@ -151,6 +154,8 @@ int uffd_monitor(void *args) {
         continue;
 
       switch (msg.event) {
+      case 0: // HACK: Fallback when using /dev/zero for events
+        break;
       case UFFD_EVENT_PAGEFAULT:
         if (msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP) {
           Range *r = NULL;
