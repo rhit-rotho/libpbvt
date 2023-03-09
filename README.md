@@ -1,6 +1,6 @@
 # libpbvt
 
-Library that provides version-control for program memory. Check `examples/` for usage. For building for use in other projcets (e.g. [rdb](https://github.com/rhit-rotho/rdb)):
+Library that provides version-control for program memory. Check `examples/` for usage. For building for use in other projects (e.g. [rdb](https://github.com/rhit-rotho/rdb)):
 
 ```shell
 $ sudo apt install -y build-essential
@@ -11,9 +11,9 @@ $ ./track-clone
 ...
 ```
 
-To start tracking memory with version control, call `pbvt_track_range(void *range, size_t n, int perms)` with the desired range. Writes to the memory region will be tracked automatically, and put the region into a *transitive* state, until a call to `pbvt_commit()`, which will return a `Commit*` handle that can be used to checkout to the previous state of memory.
+To start tracking memory with version control, call `pbvt_track_range(void *range, size_t n, int perms)` with the desired range. Writes to the memory region will be tracked automatically, and will put the region into a *transitive* state, until a call to `pbvt_commit()`, which will return a `Commit*` handle that can be used to checkout to the previous state of memory.
 
-Additionally, a persistent heap allocation is provided, which will provide smaller chunks of persistent memory. Using `pbvt_malloc` and `pbvt_free` it is possible to create persistent data structures, see `examples/linked-list.c` for an example of a persistent linked list.
+Additionally, a persistent heap allocator is provided, which will provide smaller chunks of persistent memory. Using `pbvt_malloc` and `pbvt_free` it is possible to create persistent data structures, see `examples/linked-list.c` for an example of a persistent linked list.
 
 ## General Usage
 
