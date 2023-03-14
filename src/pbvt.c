@@ -113,8 +113,12 @@ int uffd_monitor(void *args) {
   int infd = ((uffd_args *)args)->infd;
   int outfd = ((uffd_args *)args)->outfd;
 
+#ifdef _LINUX_USERFAULTFD_H
   int uffd =
       syscall(SYS_userfaultfd, O_NONBLOCK | O_CLOEXEC | UFFD_USER_MODE_ONLY);
+#else
+  int uffd = -1;
+#endif
   if (uffd < 0) {
     uffd = open("/dev/zero", O_RDONLY);
     goto skip_uffd;
@@ -188,12 +192,14 @@ skip_uffd:
         read(infd, &range, sizeof(range));
         read(infd, &n, sizeof(n));
 
+#ifdef _LINUX_USERFAULTFD_H
         struct uffdio_register uffd_register = {};
         uffd_register.range.start = (__u64)range;
         uffd_register.range.len = n;
         uffd_register.mode = UFFDIO_REGISTER_MODE_WP;
         ioctl(uffd, UFFDIO_REGISTER, &uffd_register);
         // xperror("ioctl(uffd, UFFDIO_REGISTER)");
+#endif
 
         c = MSG_SUCCESS;
         write(outfd, &c, 1);
