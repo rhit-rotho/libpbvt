@@ -113,7 +113,7 @@ int uffd_monitor(void *args) {
   int infd = ((uffd_args *)args)->infd;
   int outfd = ((uffd_args *)args)->outfd;
 
-#ifdef _LINUX_USERFAULTFD_H
+#ifdef UFFD_USER_MODE_ONLY
   int uffd =
       syscall(SYS_userfaultfd, O_NONBLOCK | O_CLOEXEC | UFFD_USER_MODE_ONLY);
 #else
@@ -192,7 +192,7 @@ skip_uffd:
         read(infd, &range, sizeof(range));
         read(infd, &n, sizeof(n));
 
-#ifdef _LINUX_USERFAULTFD_H
+#ifdef UFFDIO_REGISTER_MODE_WP
         struct uffdio_register uffd_register = {};
         uffd_register.range.start = (__u64)range;
         uffd_register.range.len = n;
@@ -599,6 +599,7 @@ void pbvt_debug(void) {
   // printf("CHILD_MASK     = %ld\n", CHILD_MASK);
 }
 
+extern MallocState global_heap;
 void pbvt_stats() {
   pbvt_debug();
   printf("Tracked states: %ld\n", ht_size(pvs->states));
@@ -756,23 +757,31 @@ void pbvt_branch_commit(char *name) {
 }
 
 void pbvt_write_protect_internal(int uffd, Range *r, uint8_t dirty) {
-  struct uffdio_writeprotect wp;
+#ifdef UFFDIO_WRITEPROTECT_MODE_WP
+  struct uffdio_writeprotect wp = {0};
   wp.range.start = (uint64_t)r->address;
   wp.range.len = r->len;
+#endif
   int prot;
 
   if (dirty) {
     r->dirty = 1;
+#ifdef UFFDIO_WRITEPROTECT_MODE_WP
     wp.mode = 0;
+#endif
     prot = r->perms;
   } else {
     r->dirty = 0;
+#ifdef UFFDIO_WRITEPROTECT_MODE_WP
     wp.mode = UFFDIO_WRITEPROTECT_MODE_WP;
+#endif
     prot = r->perms & ~PROT_WRITE;
   }
 
+#ifdef UFFDIO_WRITEPROTECT
   if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp) == 0)
     return;
+#endif
 
   if (mprotect(r->address, r->len, prot) < 0)
     xperror("mprotect");
