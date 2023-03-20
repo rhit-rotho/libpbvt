@@ -10,6 +10,12 @@
 
 extern HashTable *ht;
 
+typedef enum PBVT_HOOK_TYPE {
+  PBVT_ON_FAULT,
+} PBVT_HOOK_TYPE;
+
+typedef void (*pbvt_hook)(void *, void *);
+
 typedef struct Range {
   void *address;
   size_t len;
@@ -35,6 +41,9 @@ typedef struct PVectorState {
   HashTable *branches;
   HashTable *states;
   Queue *ranges;
+
+  pbvt_hook on_fault;
+  void *on_fault_ctx;
 } PVectorState;
 
 #define PUBLIC __attribute__((visibility("default")))
@@ -62,7 +71,6 @@ PUBLIC Commit *pbvt_commit();
 //@ requires 
 PUBLIC void pbvt_checkout(Commit *commit);
 
-
 PUBLIC Commit *pbvt_commit_parent(Commit *commit);
 
 //@ requires pbvt != []
@@ -74,6 +82,7 @@ PUBLIC void pbvt_branch_commit(char *name);
 PUBLIC void pbvt_branch_checkout(char *name);
 
 PUBLIC uint64_t pbvt_capacity(void);
+PUBLIC int pbvt_install_hook(PBVT_HOOK_TYPE type, pbvt_hook hook, void *ctx);
 
 // Persistent heap operations
 PUBLIC void *pbvt_calloc(size_t nmemb, size_t size);

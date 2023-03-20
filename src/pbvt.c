@@ -335,7 +335,22 @@ void pbvt_init(void) {
   if (persistent_heap == MAP_FAILED)
     xperror("mmap");
   pbvt_track_range(persistent_heap, HEAP_SIZE, PROT_READ | PROT_WRITE);
+  persistent_heap->on_mmap = persistent_heap_hook;
   return;
+}
+
+// TODO: Add support for installing multiple hooks
+int pbvt_install_hook(PBVT_HOOK_TYPE type, pbvt_hook hook, void *ctx) {
+  switch (type) {
+  case PBVT_ON_FAULT:
+    if (pvs->on_fault)
+      return -1;
+    pvs->on_fault = hook;
+    pvs->on_fault_ctx = ctx;
+    return 0;
+  default:
+    return -1;
+  }
 }
 
 Commit *pbvt_commit_create(PVector *v, Commit *p) {

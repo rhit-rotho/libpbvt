@@ -64,10 +64,9 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
     key += 0x1000;
   }
 
-  // TODO: Replace with callbacks inside MallocState, e.g. on_malloc, on_mmap,
-  // on_free, etc. Then this can be handled correctly inside of pbvt.c
-  if (ms != &global_heap)
-    pbvt_track_range(bin, sz, PROT_READ | PROT_WRITE);
+  // TODO: Add callbacks on_malloc, on_free, etc.
+  if (ms->on_mmap)
+    ms->on_mmap(bin);
 
   return bin;
 }

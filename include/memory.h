@@ -79,6 +79,8 @@ typedef struct MallocState {
   BinHdr *bins[NUM_BINS + 1];
 
   HashTable *bt;
+
+  void (*on_mmap)(BinHdr *);
 } MallocState;
 
 void *memory_calloc(MallocState *ms, size_t nmemb, size_t size);
