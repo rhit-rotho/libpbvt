@@ -68,7 +68,7 @@ PUBLIC void pbvt_update_n(uint64_t key, void *buf, size_t len);
 PUBLIC Commit *pbvt_commit();
 
 //@ requires commit != null
-//@ requires 
+//@ requires
 PUBLIC void pbvt_checkout(Commit *commit);
 
 PUBLIC Commit *pbvt_commit_parent(Commit *commit);

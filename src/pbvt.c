@@ -7,10 +7,12 @@
 #include <poll.h>
 #include <sched.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <threads.h>
 #include <unistd.h>
 
 #include "fasthash.h"
@@ -43,8 +45,32 @@
 typedef struct uffd_args {
   PVectorState *pvs;
   int infd;
-  int outfd;
 } uffd_args;
+
+typedef struct MessageRange {
+  void *range;
+  uint64_t n;
+} MessageRange;
+
+typedef struct MessageWP {
+  Range *r;
+  uint8_t dirty;
+} MessageWP;
+
+typedef struct MonitorMessage {
+  char type;
+  atomic_char status;
+  cnd_t reply_cond;
+  mtx_t reply_mutex;
+  union {
+    void *addr;
+    MessageRange range;
+    MessageWP wp;
+  } data;
+  union {
+    Commit *commit;
+  } reply;
+} MonitorMessage;
 
 void *clone_stk;
 int pipefd[2];
@@ -53,18 +79,70 @@ PVectorState *pvs;
 
 void *alt_stk;
 
-// TODO: This needs either locking or IPC, since each thread will end up here
-// when segfaulting.
+#define MAX_QUEUE_SIZE (32)
+
+struct MonitorMessage *queue[MAX_QUEUE_SIZE];
+atomic_int head = ATOMIC_VAR_INIT(0);
+atomic_int tail = ATOMIC_VAR_INIT(0);
+
+int mon_enqueue(MonitorMessage *msg) {
+  int curr_tail = atomic_load(&tail);
+  int next_tail = (curr_tail + 1) % MAX_QUEUE_SIZE;
+
+  if (next_tail == atomic_load(&head))
+    return -1;
+
+  queue[curr_tail] = msg;
+  atomic_store(&tail, next_tail);
+  return 0;
+}
+
+MonitorMessage *mon_dequeue(void) {
+  int curr_head = atomic_load(&head);
+  if (curr_head == atomic_load(&tail))
+    return NULL;
+
+  MonitorMessage *msg = queue[curr_head];
+  atomic_store(&head, (curr_head + 1) % MAX_QUEUE_SIZE);
+  return msg;
+}
+
+void msg_wait(MonitorMessage *msg) {
+  msg->status = ATOMIC_VAR_INIT(0);
+  mtx_init(&msg->reply_mutex, mtx_plain);
+  cnd_init(&msg->reply_cond);
+  mon_enqueue(msg);
+
+  // Wake up monitor thread
+  // TODO: Replace with atomic wait in monitor thread
+  char c = 0;
+  write(pipefd[0], &c, 1);
+
+  mtx_lock(&msg->reply_mutex);
+  while (!atomic_load(&msg->status)) {
+    cnd_wait(&msg->reply_cond, &msg->reply_mutex);
+  }
+  mtx_unlock(&msg->reply_mutex);
+}
+
+void msg_reply(MonitorMessage *msg, int status) {
+  atomic_store(&msg->status, status);
+  mtx_lock(&msg->reply_mutex);
+  cnd_signal(&msg->reply_cond);
+  mtx_unlock(&msg->reply_mutex);
+}
+
 void segv_monitor(int signo, siginfo_t *si, void *ctx) {
   UNUSED(ctx);
   assert(signo == SIGSEGV);
 
-  void *addr = si->si_addr;
-  char c = MSG_HANDLE_FAULT;
-  write(pipefd[0], &c, 1);
-  write(pipefd[0], &addr, sizeof(addr));
-  read(pipefd[1], &c, 1);
-  assert(c == MSG_SUCCESS);
+  MonitorMessage msg = {0};
+  msg.type = MSG_HANDLE_FAULT;
+  msg.data.addr = si->si_addr;
+  msg_wait(&msg);
+
+  assert(msg.status == MSG_SUCCESS);
+
   return;
 }
 
@@ -111,7 +189,6 @@ int uffd_monitor(void *args) {
   // after our handshake
   PVectorState *pvs = ((uffd_args *)args)->pvs;
   int infd = ((uffd_args *)args)->infd;
-  int outfd = ((uffd_args *)args)->outfd;
 
 #ifdef UFFD_USER_MODE_ONLY
   int uffd =
@@ -137,10 +214,12 @@ skip_uffd:
   pollfds[1].events = POLLIN | POLLHUP | POLLNVAL;
 
   char c;
-  read(infd, &c, 1);
-  assert(c == MSG_HANDSHAKE);
-  c = MSG_SUCCESS;
-  write(outfd, &c, 1);
+  read(pollfds[1].fd, &c, 1);
+  MonitorMessage *tmsg = NULL;
+  while (!tmsg)
+    tmsg = mon_dequeue();
+  assert(tmsg->type == MSG_HANDSHAKE);
+  msg_reply(tmsg, MSG_SUCCESS);
 
   for (;;) {
     // TODO: Right now we technically only need the read, since it's blocking,
@@ -185,14 +264,16 @@ skip_uffd:
     if (pollfds[1].revents & POLLIN) {
       if (read(infd, &c, 1) < 0)
         xperror("monitor read");
-      switch (c) {
+
+      MonitorMessage *msg = mon_dequeue();
+
+      switch (msg->type) {
       case MSG_REGISTER_RANGE: {
-        uint64_t range;
-        uint64_t n;
-        read(infd, &range, sizeof(range));
-        read(infd, &n, sizeof(n));
 
 #ifdef UFFDIO_REGISTER_MODE_WP
+        uint64_t range = (uint64_t)msg->data.range.range;
+        uint64_t n = msg->data.range.n;
+
         struct uffdio_register uffd_register = {};
         uffd_register.range.start = (__u64)range;
         uffd_register.range.len = n;
@@ -201,13 +282,11 @@ skip_uffd:
         // xperror("ioctl(uffd, UFFDIO_REGISTER)");
 #endif
 
-        c = MSG_SUCCESS;
-        write(outfd, &c, 1);
+        msg_reply(msg, MSG_SUCCESS);
         break;
       }
       case MSG_HANDLE_FAULT: {
-        void *addr;
-        read(infd, &addr, sizeof(addr));
+        void *addr = msg->data.addr;
 
         Range *r = NULL;
         for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
@@ -218,39 +297,34 @@ skip_uffd:
         }
 
         if (!r) {
-          c = MSG_FAILURE;
           printf("Couldn't find range!\n");
-          write(outfd, &c, 1);
+          msg_reply(msg, MSG_FAILURE);
           break;
         }
 
         pbvt_relocate_away_internal(r);
         pbvt_write_protect_internal(uffd, r, 1);
 
-        c = MSG_SUCCESS;
-        write(outfd, &c, 1);
+        if (pvs->on_fault)
+          pvs->on_fault(pvs->on_fault_ctx, addr);
+        msg_reply(msg, MSG_SUCCESS);
         break;
       }
       case MSG_WRITE_PROTECT: {
-        Range *r;
-        uint8_t dirty;
-        read(infd, &r, sizeof(r));
-        read(infd, &dirty, sizeof(dirty));
+        Range *r = msg->data.wp.r;
+        uint8_t dirty = msg->data.wp.dirty;
 
         pbvt_write_protect_internal(uffd, r, dirty);
-
-        c = MSG_SUCCESS;
-        write(outfd, &c, 1);
+        msg_reply(msg, MSG_SUCCESS);
         break;
       }
       case MSG_COMMIT: {
-        Commit *commit = pbvt_commit_internal(uffd);
-        c = MSG_SUCCESS;
-        write(outfd, &c, 1);
-        write(outfd, &commit, sizeof(Commit *));
+        msg->reply.commit = pbvt_commit_internal(uffd);
+        msg_reply(msg, MSG_SUCCESS);
         break;
       }
       case MSG_SHUTDOWN:
+        msg_reply(msg, MSG_SUCCESS);
         goto cleanup;
       default:
         xperror("userfaultfd_monitor: unrecognized char");
@@ -262,9 +336,11 @@ skip_uffd:
   }
 
 cleanup:
-  c = MSG_SUCCESS;
-  write(outfd, &c, 1);
   exit(EXIT_SUCCESS);
+}
+
+void persistent_heap_hook(BinHdr *bin) {
+  return pbvt_track_range(bin, bin->memsz, PROT_READ | PROT_WRITE);
 }
 
 void pbvt_init(void) {
@@ -280,16 +356,12 @@ void pbvt_init(void) {
     xperror("mmap");
 
   int p2c[2];
-  int c2p[2];
   pipe(p2c);
-  pipe(c2p);
   pipefd[0] = p2c[1];
-  pipefd[1] = c2p[0];
 
   uffd_args args;
   args.pvs = pvs;
   args.infd = p2c[0];
-  args.outfd = c2p[1];
   if (clone(uffd_monitor, clone_stk + STACK_SIZE, CLONE_VM, &args) == -1)
     xperror("clone");
 
@@ -311,10 +383,9 @@ void pbvt_init(void) {
   if (sigaction(SIGSEGV, &act, NULL) < 0)
     xperror("sigaction(SIGSEGV)");
 
-  char c = MSG_HANDSHAKE;
-  write(pipefd[0], &c, 1);
-  read(pipefd[1], &c, 1);
-  assert(c == MSG_SUCCESS);
+  MonitorMessage msg = {.type = MSG_HANDSHAKE};
+  msg_wait(&msg);
+  assert(msg.status == MSG_SUCCESS);
 
   // Create our null node ("null object" pattern if you like OOP)
   PVector *v = memory_calloc(NULL, 1, sizeof(PVector));
@@ -377,10 +448,9 @@ void pbvt_branch_free(Branch *b) {
 }
 
 void pbvt_cleanup() {
-  char c = MSG_SHUTDOWN;
-  write(pipefd[0], &c, 1);
-  read(pipefd[1], &c, 1);
-  assert(c == MSG_SUCCESS);
+  MonitorMessage msg = {.type = MSG_SHUTDOWN};
+  msg_wait(&msg);
+  assert(msg.status == MSG_SUCCESS);
 
   // Free commits
   for (size_t i = 0; i < pvs->states->cap; ++i) {
@@ -452,7 +522,7 @@ void pbvt_gc_n(size_t n) {
   assert(t == n);
 }
 
-size_t pbvt_size() { return ht_size(pvs->states); }
+size_t pbvt_size(void) { return ht_size(pvs->states); }
 
 void pbvt_print(char *path) {
   HashTable *pr = ht_create();
@@ -667,13 +737,11 @@ void pbvt_track_range(void *range, size_t n, int perms) {
     l->bytes = range + i;
   }
 
-  char c = MSG_REGISTER_RANGE;
-  write(pipefd[0], &c, 1);
-  write(pipefd[0], &range, sizeof(range));
-  write(pipefd[0], &n, sizeof(n));
-
-  read(pipefd[1], &c, 1);
-  assert(c == MSG_SUCCESS);
+  MonitorMessage msg = {.type = MSG_REGISTER_RANGE};
+  msg.data.range.range = range;
+  msg.data.range.n = n;
+  msg_wait(&msg);
+  assert(msg.status == MSG_SUCCESS);
 
   for (size_t i = 0; i < n; i += 0x1000) {
     Range *r = memory_calloc(NULL, 1, sizeof(Range));
@@ -686,14 +754,10 @@ void pbvt_track_range(void *range, size_t n, int perms) {
 }
 
 Commit *pbvt_commit() {
-  Commit *commit;
-  char c = MSG_COMMIT;
-  write(pipefd[0], &c, 1);
-
-  read(pipefd[1], &c, 1);
-  read(pipefd[1], &commit, sizeof(Commit *));
-  assert(c == MSG_SUCCESS);
-  return commit;
+  MonitorMessage msg = {.type = MSG_COMMIT};
+  msg_wait(&msg);
+  assert(msg.status == MSG_SUCCESS);
+  return msg.reply.commit;
 }
 
 Commit *pbvt_commit_internal(int uffd) {
@@ -806,20 +870,14 @@ void pbvt_write_protect_internal(int uffd, Range *r, uint8_t dirty) {
 }
 
 void pbvt_write_protect(Range *r, uint8_t dirty) {
-  char c = MSG_WRITE_PROTECT;
-
-  write(pipefd[0], &c, 1);
-  write(pipefd[0], &r, sizeof(r));
-  write(pipefd[0], &dirty, sizeof(dirty));
-
-  read(pipefd[1], &c, 1);
-  assert(c == MSG_SUCCESS);
+  MonitorMessage msg = {.type = MSG_WRITE_PROTECT};
+  msg.data.wp.r = r;
+  msg.data.wp.dirty = dirty;
+  msg_wait(&msg);
+  assert(msg.status == MSG_SUCCESS);
 }
 
-Commit *pbvt_commit_parent(Commit *commit) {
-  UNUSED(pvs);
-  return commit->parent;
-}
+Commit *pbvt_commit_parent(Commit *commit) { return commit->parent; }
 
 Commit *pbvt_head() { return pvs->head; }
 
