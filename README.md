@@ -5,7 +5,7 @@ Library that provides version-control for program memory. Check `examples/` for 
 ```shell
 $ sudo apt install -y build-essential
 $ make clean all && sudo make install
-$ export LD_LIBRARY_PATH=/usr/local/bin:$LD_LIBRARY_PATH
+$ export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 $ cc examples/track-clone.c -lpbvt -o track-clone
 $ ./track-clone
 ...
