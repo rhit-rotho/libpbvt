@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <string.h>
+#include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -73,7 +74,7 @@ typedef struct MonitorMessage {
 } MonitorMessage;
 
 void *clone_stk;
-int pipefd[2];
+int efd;
 MallocState *persistent_heap;
 PVectorState *pvs;
 
@@ -114,9 +115,8 @@ void msg_wait(MonitorMessage *msg) {
   mon_enqueue(msg);
 
   // Wake up monitor thread
-  // TODO: Replace with atomic wait in monitor thread
-  char c = 0;
-  write(pipefd[0], &c, 1);
+  uint64_t c = 1;
+  write(efd, &c, sizeof(c));
 
   mtx_lock(&msg->reply_mutex);
   while (!atomic_load(&msg->status)) {
@@ -213,8 +213,9 @@ skip_uffd:
   pollfds[1].fd = infd;
   pollfds[1].events = POLLIN | POLLHUP | POLLNVAL;
 
-  char c;
-  read(pollfds[1].fd, &c, 1);
+  uint64_t c;
+  read(efd, &c, sizeof(c));
+
   MonitorMessage *tmsg = NULL;
   while (!tmsg)
     tmsg = mon_dequeue();
@@ -222,18 +223,17 @@ skip_uffd:
   msg_reply(tmsg, MSG_SUCCESS);
 
   for (;;) {
-    // TODO: Right now we technically only need the read, since it's blocking,
-    // but according to userfaultfd(2) we should also be doing POLLERR to
-    // resolve any potential issues with our ioctl() calls.
     if (poll(pollfds, 2, -1) < 0)
       xperror("poll(uffd)");
 
-    // TODO: Implement
+    // TODO: Right now we technically only need the read, since it's blocking,
+    // but according to userfaultfd(2) we should also be doing POLLERR to
+    // resolve any potential issues with our ioctl() calls.
     if (pollfds[0].revents & POLLERR)
       xperror("POLLERR in userfaultfd");
 
     if (pollfds[0].revents & POLLIN) {
-      if (read(uffd, &msg, sizeof(msg)) < 0)
+      if (read(pollfds[0].fd, &msg, sizeof(msg)) < 0)
         continue;
 
       switch (msg.event) {
@@ -262,7 +262,7 @@ skip_uffd:
     }
 
     if (pollfds[1].revents & POLLIN) {
-      if (read(infd, &c, 1) < 0)
+      if (read(pollfds[1].fd, &c, sizeof(c)) < 0)
         xperror("monitor read");
 
       MonitorMessage *msg = mon_dequeue();
@@ -355,13 +355,13 @@ void pbvt_init(void) {
   if (clone_stk == MAP_FAILED)
     xperror("mmap");
 
-  int p2c[2];
-  pipe(p2c);
-  pipefd[0] = p2c[1];
+  efd = eventfd(0, EFD_SEMAPHORE);
+  if (efd < 0)
+    xperror("eventfd");
 
   uffd_args args;
   args.pvs = pvs;
-  args.infd = p2c[0];
+  args.infd = efd;
   if (clone(uffd_monitor, clone_stk + STACK_SIZE, CLONE_VM, &args) == -1)
     xperror("clone");
 
@@ -484,6 +484,8 @@ void pbvt_cleanup() {
 
   // Free hashtable
   ht_free(ht);
+
+  close(efd);
 
   // TODO: Make these client stubs for message passing to another thread
   munmap(clone_stk, STACK_SIZE);
