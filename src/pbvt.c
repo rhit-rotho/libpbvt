@@ -813,11 +813,17 @@ Commit *pbvt_commit_internal(int uffd) {
   return nh;
 }
 
+Commit *pbvt_branch_head(char *name) {
+  uint64_t key = fasthash64(name, strlen(name), 0);
+  Branch *b = ht_get(pvs->branches, key);
+  assert(b && "Branch does not exist!");
+  return b->head;
+}
+
 void pbvt_branch_checkout(char *name) {
   uint64_t key = fasthash64(name, strlen(name), 0);
   Branch *b = ht_get(pvs->branches, key);
-  if (!b)
-    assert(0 && "Branch does not exist!");
+  assert(b && "Branch does not exist!");
   pbvt_checkout(b->head);
   pvs->branch = b;
 }

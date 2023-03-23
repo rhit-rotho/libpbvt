@@ -80,6 +80,7 @@ PUBLIC Commit *pbvt_head();
 //@ ensures pbvt[|pbvt|] = {#memory}
 PUBLIC void pbvt_branch_commit(char *name);
 PUBLIC void pbvt_branch_checkout(char *name);
+PUBLIC Commit *pbvt_branch_head(char *name);
 
 PUBLIC uint64_t pbvt_capacity(void);
 PUBLIC int pbvt_install_hook(PBVT_HOOK_TYPE type, pbvt_hook hook, void *ctx);
