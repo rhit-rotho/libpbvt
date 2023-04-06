@@ -5,6 +5,7 @@
 #include <linux/userfaultfd.h>
 #include <malloc.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -28,14 +29,18 @@
 #define HEAP_SIZE (0x1000)
 #define UNUSED(x) (void)(x)
 
-#define MSG_HANDSHAKE (0x40)
-#define MSG_REGISTER_RANGE (0x41)
-#define MSG_WRITE_PROTECT (0x42)
-#define MSG_SHUTDOWN (0x43)
-#define MSG_SUCCESS (0x44)
-#define MSG_COMMIT (0x45)
-#define MSG_HANDLE_FAULT (0x46)
-#define MSG_FAILURE (0x47)
+enum MSG_TYPE {
+  MSG_NONE = 0,
+  MSG_HANDSHAKE,
+  MSG_REGISTER_RANGE,
+  MSG_WRITE_PROTECT,
+  MSG_SHUTDOWN,
+  MSG_SUCCESS,
+  MSG_COMMIT,
+  MSG_HANDLE_FAULT,
+  MSG_FAILURE,
+  NUM_MSGS
+};
 
 #define xperror(x)                                                             \
   do {                                                                         \
@@ -60,9 +65,7 @@ typedef struct MessageWP {
 
 typedef struct MonitorMessage {
   char type;
-  atomic_char status;
-  cnd_t reply_cond;
-  mtx_t reply_mutex;
+  char status;
   union {
     void *addr;
     MessageRange range;
@@ -71,6 +74,8 @@ typedef struct MonitorMessage {
   union {
     Commit *commit;
   } reply;
+  pthread_cond_t reply_cond;
+  pthread_mutex_t reply_mutex;
 } MonitorMessage;
 
 void *clone_stk;
@@ -83,53 +88,56 @@ void *alt_stk;
 #define MAX_QUEUE_SIZE (32)
 
 struct MonitorMessage *queue[MAX_QUEUE_SIZE];
-atomic_int head = ATOMIC_VAR_INIT(0);
-atomic_int tail = ATOMIC_VAR_INIT(0);
+pthread_mutex_t queue_mutex;
+int head = 0;
+int tail = 0;
 
 int mon_enqueue(MonitorMessage *msg) {
-  int curr_tail = atomic_load(&tail);
-  int next_tail = (curr_tail + 1) % MAX_QUEUE_SIZE;
+  pthread_mutex_lock(&queue_mutex);
 
-  if (next_tail == atomic_load(&head))
-    return -1;
-
-  queue[curr_tail] = msg;
-  atomic_store(&tail, next_tail);
+  queue[tail] = msg;
+  tail = (tail + 1) % MAX_QUEUE_SIZE;
+  assert(head != tail);
+  pthread_mutex_unlock(&queue_mutex);
   return 0;
 }
 
 MonitorMessage *mon_dequeue(void) {
-  int curr_head = atomic_load(&head);
-  if (curr_head == atomic_load(&tail))
-    return NULL;
+  pthread_mutex_lock(&queue_mutex);
+  assert(head != tail);
 
-  MonitorMessage *msg = queue[curr_head];
-  atomic_store(&head, (curr_head + 1) % MAX_QUEUE_SIZE);
+  MonitorMessage *msg = queue[head];
+  head = (head + 1) % MAX_QUEUE_SIZE;
+  pthread_mutex_unlock(&queue_mutex);
   return msg;
 }
 
 void msg_wait(MonitorMessage *msg) {
-  msg->status = ATOMIC_VAR_INIT(0);
-  mtx_init(&msg->reply_mutex, mtx_plain);
-  cnd_init(&msg->reply_cond);
+  msg->status = MSG_NONE;
+  pthread_mutex_init(&msg->reply_mutex, NULL);
+  pthread_cond_init(&msg->reply_cond, NULL);
+
+  pthread_mutex_lock(&msg->reply_mutex);
   mon_enqueue(msg);
 
   // Wake up monitor thread
   uint64_t c = 1;
   write(efd, &c, sizeof(c));
 
-  mtx_lock(&msg->reply_mutex);
-  while (!atomic_load(&msg->status)) {
-    cnd_wait(&msg->reply_cond, &msg->reply_mutex);
+  while (msg->status == MSG_NONE) {
+    pthread_cond_wait(&msg->reply_cond, &msg->reply_mutex);
   }
-  mtx_unlock(&msg->reply_mutex);
+  pthread_mutex_unlock(&msg->reply_mutex);
+
+  pthread_mutex_destroy(&msg->reply_mutex);
+  pthread_cond_destroy(&msg->reply_cond);
 }
 
 void msg_reply(MonitorMessage *msg, int status) {
-  atomic_store(&msg->status, status);
-  mtx_lock(&msg->reply_mutex);
-  cnd_signal(&msg->reply_cond);
-  mtx_unlock(&msg->reply_mutex);
+  pthread_mutex_lock(&msg->reply_mutex);
+  msg->status = status;
+  pthread_mutex_unlock(&msg->reply_mutex);
+  pthread_cond_signal(&msg->reply_cond);
 }
 
 void segv_monitor(int signo, siginfo_t *si, void *ctx) {
@@ -211,19 +219,17 @@ skip_uffd:
   pollfds[0].fd = uffd;
   pollfds[0].events = POLLIN | POLLERR;
   pollfds[1].fd = infd;
-  pollfds[1].events = POLLIN | POLLHUP | POLLNVAL;
+  pollfds[1].events = POLLIN | POLLERR;
 
   uint64_t c;
   read(efd, &c, sizeof(c));
 
-  MonitorMessage *tmsg = NULL;
-  while (!tmsg)
-    tmsg = mon_dequeue();
+  MonitorMessage *tmsg = mon_dequeue();
   assert(tmsg->type == MSG_HANDSHAKE);
   msg_reply(tmsg, MSG_SUCCESS);
 
   for (;;) {
-    if (poll(pollfds, 2, -1) < 0)
+    if (poll(pollfds, 2, 1000) < 0)
       xperror("poll(uffd)");
 
     // TODO: Right now we technically only need the read, since it's blocking,
@@ -237,7 +243,7 @@ skip_uffd:
         continue;
 
       switch (msg.event) {
-      case 0: // HACK: Fallback when using /dev/zero for events
+      case MSG_NONE: // HACK: Fallback when using /dev/zero for events
         break;
       case UFFD_EVENT_PAGEFAULT:
         if (msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP) {
@@ -269,7 +275,6 @@ skip_uffd:
 
       switch (msg->type) {
       case MSG_REGISTER_RANGE: {
-
 #ifdef UFFDIO_REGISTER_MODE_WP
         uint64_t range = (uint64_t)msg->data.range.range;
         uint64_t n = msg->data.range.n;
@@ -296,8 +301,9 @@ skip_uffd:
           r = NULL;
         }
 
+        // TODO: This could be a segfault
         if (!r) {
-          printf("Couldn't find range!\n");
+          printf("Couldn't find range for address %.16lx!\n", (uint64_t)addr);
           msg_reply(msg, MSG_FAILURE);
           break;
         }
@@ -358,6 +364,8 @@ void pbvt_init(void) {
   efd = eventfd(0, EFD_SEMAPHORE);
   if (efd < 0)
     xperror("eventfd");
+
+  pthread_mutex_init(&queue_mutex, NULL);
 
   uffd_args args;
   args.pvs = pvs;

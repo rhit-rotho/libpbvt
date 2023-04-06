@@ -104,6 +104,8 @@ void pbvt_branch_free(Branch *b);
 void pbvt_write_protect(Range *r, uint8_t);
 void pbvt_write_protect_internal(int uffd, Range *r, uint8_t dirty);
 Commit *pbvt_commit_internal(int uffd);
+void pbvt_branch_checkout_internal(int uffd, char *name);
+void pbvt_checkout_internal(int uffd, Commit *commit);
 
 void pbvt_relocate_away_internal(Range *r);
 void pbvt_relocate_into_internal(Range *r, PVector *v);
