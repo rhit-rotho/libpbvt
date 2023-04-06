@@ -723,6 +723,49 @@ void pbvt_stats() {
 
 uint64_t pbvt_capacity(void) { return MAX_INDEX; }
 
+Commit *pbvt_last_changed(uint64_t idx, size_t n) {
+  // TODO: Add support for multiple bytes
+  assert(n == 1);
+
+  Commit *head = pbvt_head();
+
+  Commit *p = head->parent;
+  while (p) {
+    PVector *cv = head->current;
+    PVector *pv = p->current;
+    uint64_t idxn = idx >> BOTTOM_BITS;
+    uint64_t key;
+
+    // Traverse both tries down to the leaf, if we get to a point where the
+    // hashes are the same, then this node couldn't have changed, so break.
+    for (int i = MAX_DEPTH - 1; i >= 1; --i) {
+      key = (idxn >> (i - 1) * BITS_PER_LEVEL) & CHILD_MASK;
+      if (pv->children[key] == cv->children[key])
+        goto skip;
+      if (cv->children[key] == 0UL)
+        return NULL;
+      if (pv->children[key] == 0UL)
+        return NULL;
+
+      pv = ht_get(ht, pv->children[key]);
+      cv = ht_get(ht, cv->children[key]);
+    }
+
+    PVectorLeaf *pvl = (PVectorLeaf *)pv;
+    PVectorLeaf *cvl = (PVectorLeaf *)cv;
+
+    // TODO: Verify bottom bits at the desired positions (n bytes) have actually
+    // changed.
+    if (pvl->bytes[idx & BOTTOM_MASK] != cvl->bytes[idx & BOTTOM_MASK])
+      return p;
+
+  skip:
+    p = p->parent;
+    continue;
+  }
+  return NULL;
+}
+
 void pbvt_track_range(void *range, size_t n, int perms) {
   // TODO: Zero-pad, handle this correctly
   assert((uint64_t)range % sysconf(_SC_PAGESIZE) == 0);

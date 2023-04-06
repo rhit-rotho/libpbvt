@@ -93,6 +93,8 @@ PUBLIC void pbvt_free(void *ptr);
 
 PUBLIC void pbvt_stats();
 
+PUBLIC Commit *pbvt_last_changed(uint64_t key, size_t n);
+
 // Private operations
 void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level);
 void pbvt_debug(void);
