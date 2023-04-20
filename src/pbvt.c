@@ -117,8 +117,9 @@ void msg_wait(MonitorMessage *msg) {
   pthread_mutex_init(&msg->reply_mutex, NULL);
   pthread_cond_init(&msg->reply_cond, NULL);
 
-  pthread_mutex_lock(&msg->reply_mutex);
   mon_enqueue(msg);
+
+  pthread_mutex_lock(&msg->reply_mutex);
 
   // Wake up monitor thread
   uint64_t c = 1;
@@ -142,6 +143,8 @@ void msg_reply(MonitorMessage *msg, int status) {
 
 void segv_monitor(int signo, siginfo_t *si, void *ctx) {
   UNUSED(ctx);
+  UNUSED(signo);
+
   assert(signo == SIGSEGV);
 
   MonitorMessage msg = {0};
@@ -186,9 +189,16 @@ void pbvt_relocate_away_internal(Range *r) {
   }
 }
 
+void uffd_segv(int signo) {
+  UNUSED(signo);
+  printf("WARNING: got segfault in uffd_montior\n");
+}
+
 int uffd_monitor(void *args) {
   UNUSED(args);
   printf("uffd_monitor: %d\n", getpid());
+
+  signal(SIGSEGV, uffd_segv);
 
   struct pollfd pollfds[2];
   struct uffd_msg msg = {0};
@@ -723,14 +733,30 @@ void pbvt_stats() {
 
 uint64_t pbvt_capacity(void) { return MAX_INDEX; }
 
+// TODO: Suboptimal, complexity is O(kmlog_d(n)), k number of bytes, n size of
+// trie, m number of commits
 Commit *pbvt_last_changed(uint64_t idx, size_t n) {
-  // TODO: Add support for multiple bytes
-  assert(n == 1);
+  size_t tmpd = -1;
+  size_t mindepth = -1;
+  Commit *tmpc, *c = NULL;
+  for (size_t i = 0; i < n; ++i) {
+    tmpc = pbvt_last_changed_internal(idx + i, &tmpd);
+    if (tmpd < mindepth) {
+      mindepth = tmpd;
+      c = tmpc;
+    }
+  }
 
+  return c;
+}
+
+// O(mlog_d(n)) 
+Commit *pbvt_last_changed_internal(uint64_t idx, size_t *depth) {
   Commit *head = pbvt_head();
 
+  *depth = 0;
   Commit *p = head->parent;
-  while (p) {
+  while (p) { // O(m) - m number of commits
     PVector *cv = head->current;
     PVector *pv = p->current;
     uint64_t idxn = idx >> BOTTOM_BITS;
@@ -738,19 +764,23 @@ Commit *pbvt_last_changed(uint64_t idx, size_t n) {
 
     // Traverse both tries down to the leaf, if we get to a point where the
     // hashes are the same, then this node couldn't have changed, so break.
+    // O(log_d(n)) - n is the size of the trie
     for (int i = MAX_DEPTH - 1; i >= 1; --i) {
       key = (idxn >> (i - 1) * BITS_PER_LEVEL) & CHILD_MASK;
       if (pv->children[key] == cv->children[key])
         goto skip;
-      if (cv->children[key] == 0UL)
+      if (cv->children[key] == 0UL) {
+        *depth = -1;
         return NULL;
-      if (pv->children[key] == 0UL)
+      }
+      if (pv->children[key] == 0UL) {
+        *depth = -1;
         return NULL;
+      }
 
-      pv = ht_get(ht, pv->children[key]);
+      pv = ht_get(ht, pv->children[key]); // O(1)
       cv = ht_get(ht, cv->children[key]);
     }
-
     PVectorLeaf *pvl = (PVectorLeaf *)pv;
     PVectorLeaf *cvl = (PVectorLeaf *)cv;
 
@@ -761,8 +791,9 @@ Commit *pbvt_last_changed(uint64_t idx, size_t n) {
 
   skip:
     p = p->parent;
-    continue;
+    *depth = 0;
   }
+  *depth = 0;
   return NULL;
 }
 

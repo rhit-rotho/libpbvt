@@ -111,3 +111,5 @@ void pbvt_checkout_internal(int uffd, Commit *commit);
 
 void pbvt_relocate_away_internal(Range *r);
 void pbvt_relocate_into_internal(Range *r, PVector *v);
+
+Commit *pbvt_last_changed_internal(uint64_t idx, size_t *depth);
