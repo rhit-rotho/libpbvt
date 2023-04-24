@@ -1,4 +1,6 @@
-#include <assert.h>
+// #include <assert.h>
+#include <libunwind.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -7,10 +9,38 @@
 #include "fasthash.h"
 #include "memory.h"
 
+void my_assert(char *file, char *function, int line, char *str, int condition) {
+  if (!condition) {
+    unw_cursor_t cursor;
+    unw_context_t context;
+
+    unw_getcontext(&context);
+    unw_init_local(&cursor, &context);
+
+    fprintf(stderr, "%s:%ld: %s '%s' failed! Stack trace:\n", file, line,
+            function, str);
+
+    while (unw_step(&cursor) > 0) {
+      unw_word_t offset, pc;
+      char fname[64];
+
+      unw_get_reg(&cursor, UNW_REG_IP, &pc);
+      fname[0] = '\0';
+      unw_get_proc_name(&cursor, fname, sizeof(fname), &offset);
+
+      fprintf(stderr, "%p : (%s+0x%lx)\n", (void *)pc, fname, (long)offset);
+    }
+
+    exit(EXIT_FAILURE);
+  }
+}
+
+#define assert(x) my_assert(__FILE__, __FUNCTION__, __LINE__, #x, x)
+
 // Make sure this matches NUM_BINS in memory.h
 // TODO: Add sizeof(PVector), sizeof(PVectorLeaf) as dedicated bin sizes
-const size_t BIN_BITS[] = { 3, 4, 5, 6, 7, 8, 9};
-const size_t BIN_SIZES[] = { 8, 16, 32, 64, 128, 256, 512};
+const size_t BIN_BITS[] = {3, 4, 5, 7, 8, 9};
+const size_t BIN_SIZES[] = {8, 16, 32, 128, 256, 512};
 
 MallocState global_heap;
 // Allocate new bin for holding allocations of `size`
@@ -93,6 +123,8 @@ void *memory_realloc(MallocState *ms, void *ptr, size_t size) {
   BinHdr *bin = ht_get(ms->bt, fasthash64(&key, sizeof(key), 0));
   size_t idx = bin->idx;
 
+  assert(ptr < (void *)bin + bin->memsz);
+
   if (bin == NULL)
     assert(0 && "No bin found!");
 
@@ -103,8 +135,10 @@ void *memory_realloc(MallocState *ms, void *ptr, size_t size) {
     memcpy(dstptr, ptr, (void *)bin + bin->memsz - bin->contents);
   memory_free(ms, ptr);
 #ifdef MDEBUG
-  printf("realloc(%p, %ld); // bin: %p, %p\n", ptr, size, bin, dstptr);
+  printf("realloc(%.16lx, %ld); // bin: %.16lx, %.16lx\n", ptr, size, bin,
+         dstptr);
 #endif
+
   return dstptr;
 }
 
@@ -129,7 +163,8 @@ void *memory_malloc(MallocState *ms, size_t size) {
   ms->bins[idx] = bin;
   bin->sz += 1;
 #ifdef MDEBUG
-  printf("malloc(0x%lx); // oversize: %p\n", size, bin->contents);
+  printf("malloc(0x%lx); // oversize: %.16lx bin: %.16lx\n", size,
+         bin->contents, bin);
 #endif
   ms->current_bytes += bin->memsz;
   ms->current_allocations += 1;
@@ -172,7 +207,7 @@ found_size:
   ms->current_allocations += 1;
   ms->total_allocations += 1;
 #ifdef MDEBUG
-  printf("malloc(0x%lx); // %p\n", size, ptr);
+  printf("malloc(0x%lx); // %.16lx\n", size, ptr);
 #endif
   return ptr;
 }
@@ -180,9 +215,12 @@ found_size:
 void memory_free(MallocState *ms, void *ptr) {
   if (!ms)
     ms = &global_heap;
-
   if (ptr == NULL)
     return;
+
+#ifdef MDEBUG
+  printf("free(%.16lx);\n", ptr);
+#endif
 
   if (ms->bt == NULL)
     ms->bt = ht_create();
@@ -192,15 +230,22 @@ void memory_free(MallocState *ms, void *ptr) {
 
   uint64_t key = ((uintptr_t)ptr) & ~0xfff;
   bin = ht_get(ms->bt, fasthash64(&key, sizeof(key), 0));
+  assert(bin && "WARNING: No bin found!");
   idx = bin->idx;
 
-  assert(bin && "WARNING: No bin found!");
-
+  // Is this an allocation in the wilderness?
   if (idx < NUM_BINS) {
+    assert(bin <= ptr);
+    assert(ptr < (void *)bin + bin->memsz);
     size_t i = (ptr - bin->contents) >> BIN_BITS[idx];
+    if (!bv_is_set(bin->bitmap, i)) {
+      printf("Bin: %.16lx idx: %.16lx ptr: %.16lx BIN_BITS: %.16lx i: %.16lx "
+             "memsz: %.16lx\n",
+             bin, idx, ptr, BIN_BITS[idx], ptr - bin->contents, bin->memsz);
+    }
     assert(bv_is_set(bin->bitmap, i));
     bv_unset(bin->bitmap, i);
-    memset(ptr, 0x55, BIN_SIZES[idx]);
+    memset(ptr, 0x54, BIN_SIZES[idx]);
   }
 
   ms->current_allocations -= 1;
@@ -232,9 +277,6 @@ void memory_free(MallocState *ms, void *ptr) {
       assert(0 && "munmap failed!");
   }
 
-#ifdef MDEBUG
-  printf("free(%p);\n", ptr);
-#endif
   return;
 }
 

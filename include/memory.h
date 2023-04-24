@@ -1,3 +1,6 @@
+#pragma once
+
+#include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -43,8 +46,8 @@ mucking around with any internal state in malloc.
 
 */
 
-// Make sure this matches sizeof(BIN_SIZES)/sizeof(BIN_SIZES[0]) in memory.c
 #define NUM_BINS (7)
+
 // This can be tuned, must be power of 2 greater than pagesize
 #define BIN_SIZE (1 << 14)
 
