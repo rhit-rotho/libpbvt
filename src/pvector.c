@@ -1,6 +1,6 @@
-#include <assert.h>
 #include <string.h>
 
+#include "cassert.h"
 #include "fasthash.h"
 #include "hashtable.h"
 #include "memory.h"
@@ -61,16 +61,18 @@ void set_child(PVector *v, int index, uint64_t value) {
                 sizeof(uint64_t));
     v->children[compact_index] = value;
     set_bit(v->bitmap, index);
-  // } else if (is_bit_set(v->bitmap, index) && value == 0) {
-  //   // A child is being removed, resize the children array and update the bitmap
-  //   int compact_index = count_set_bits(v->bitmap, index) - 1;
-  //   memmove(&v->children[compact_index], &v->children[compact_index + 1],
-  //           (count_set_bits(v->bitmap, NUM_CHILDREN - 1) - compact_index - 1) *
-  //               sizeof(uint64_t));
-  //   v->children = memory_realloc(
-  //       NULL, v->children,
-  //       (count_set_bits(v->bitmap, NUM_CHILDREN - 1) - 1) * sizeof(uint64_t));
-  //   clear_bit(v->bitmap, index);
+    // } else if (is_bit_set(v->bitmap, index) && value == 0) {
+    //   // A child is being removed, resize the children array and update the
+    //   bitmap int compact_index = count_set_bits(v->bitmap, index) - 1;
+    //   memmove(&v->children[compact_index], &v->children[compact_index + 1],
+    //           (count_set_bits(v->bitmap, NUM_CHILDREN - 1) - compact_index -
+    //           1) *
+    //               sizeof(uint64_t));
+    //   v->children = memory_realloc(
+    //       NULL, v->children,
+    //       (count_set_bits(v->bitmap, NUM_CHILDREN - 1) - 1) *
+    //       sizeof(uint64_t));
+    //   clear_bit(v->bitmap, index);
   } else if (is_bit_set(v->bitmap, index)) {
     // Update the existing child
     int compact_index = count_set_bits(v->bitmap, index) - 1;

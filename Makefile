@@ -32,7 +32,7 @@ PROGRAM                = libpbvt.so
 EXTRA_CFLAGS           = -ggdb3 -fPIC -fdata-sections -ffunction-sections -fvisibility=hidden -nostdlib #-fsanitize=address
 
 # The extra linker options, e.g. "-lmysqlclient -lz"
-EXTRA_LDFLAGS          = 
+EXTRA_LDFLAGS          = -lunwind -lunwind-x86_64
 
 # Specify the include dirs, e.g. "-I/usr/include/mysql -I./include -I/usr/include -I/usr/local/include".
 INCLUDE                = -Iinclude
@@ -90,8 +90,8 @@ HDREXTS = .h .H .hh .hpp .HPP .h++ .hxx .hp
 
 # The pre-processor and compiler options.
 # Users can override those variables from the command line.
-CFLAGS  = -O1 # -DNDEBUG -DMDEBUG
-CXXFLAGS= -O1 # -DNDEBUG -DMDEBUG
+CFLAGS  = -O2 -DNDEBUG # -DMDEBUG
+CXXFLAGS= -O2 -DNDEBUG # -DMDEBUG
 
 # The command used to delete file.
 RM     = rm -f

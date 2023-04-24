@@ -1,6 +1,5 @@
 #define _GNU_SOURCE
 
-#include <assert.h>
 #include <fcntl.h>
 #include <linux/userfaultfd.h>
 #include <malloc.h>
@@ -17,6 +16,7 @@
 #include <threads.h>
 #include <unistd.h>
 
+#include "cassert.h"
 #include "fasthash.h"
 #include "memory.h"
 #include "pbvt.h"
@@ -195,6 +195,7 @@ void pbvt_relocate_away_internal(Range *r) {
 void uffd_segv(int signo) {
   UNUSED(signo);
   printf("WARNING: got segfault in uffd_montior\n");
+  abort();
 }
 
 int uffd_monitor(void *args) {
