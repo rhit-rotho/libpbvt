@@ -93,7 +93,7 @@ PVector *pvector_clone(PVector *v) {
   u->children = memory_calloc(NULL, 1, sizeof(uint64_t));
   for (size_t i = 0; i < NUM_CHILDREN; ++i)
     set_child(u, i, get_child(v, i));
-  printf("Set bits: %.16lx\n", count_set_bits(u->bitmap, NUM_CHILDREN-1));
+  // printf("Set bits: %.16lx\n", count_set_bits(u->bitmap, NUM_CHILDREN-1));
   return u;
 }
 

@@ -19,25 +19,8 @@ HashTable *ht_create(void) {
 void *ht_get(HashTable *ht, uint64_t key) {
   HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
   for (size_t i = 0; i < bucket->size; ++i)
-    if (bucket->keys[i] == key) {
-#if 0
-      if (i > 0) {
-        uint64_t temp_key;
-        void *temp_value;
-        memcpy(&temp_key, &bucket->keys[i], sizeof(temp_key));
-        memcpy(&temp_value, &bucket->values[i], sizeof(temp_value));
-
-        memcpy(&bucket->keys[i], &bucket->keys[0], sizeof(temp_key));
-        memcpy(&bucket->values[i], &bucket->values[0], sizeof(temp_value));
-
-        memcpy(&bucket->keys[0], &temp_key, sizeof(temp_key));
-        memcpy(&bucket->values[0], &temp_value, sizeof(temp_value));
-      }
-      return bucket->values[0];
-#else
+    if (bucket->keys[i] == key)
       return bucket->values[i];
-#endif
-    }
   return NULL;
 }
 
