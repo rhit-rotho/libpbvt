@@ -4,11 +4,11 @@
 
 // For 4-level paging (see "Paging" in Volume 3 of the Intel 64 and IA-32
 // Architectures Software Developer's manual)
-#define NUM_BITS (48)
-#define BITS_PER_LEVEL (3)
+#define NUM_BITS (48+3)
+// #define BITS_PER_LEVEL (3)
+// #define BOTTOM_BITS (3)
+#define BITS_PER_LEVEL (6)
 #define BOTTOM_BITS (3)
-//#define BITS_PER_LEVEL (9)
-//#define BOTTOM_BITS (12)
 
 // Calculated defines, make sure (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL == 0
 #if (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL != 0
@@ -32,7 +32,9 @@ typedef struct PVector PVector;
 typedef struct PVector {
   uint64_t hash;
   uint64_t refcount;
-  uint64_t children[NUM_CHILDREN];
+  uint64_t bitmap[(NUM_CHILDREN + (8 * sizeof(uint64_t)) - 1) /
+                  (8 * sizeof(uint64_t))];
+  uint64_t *children;
 } PVector;
 
 typedef struct PVectorLeaf {

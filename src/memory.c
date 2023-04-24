@@ -9,8 +9,8 @@
 
 // Make sure this matches NUM_BINS in memory.h
 // TODO: Add sizeof(PVector), sizeof(PVectorLeaf) as dedicated bin sizes
-const size_t BIN_BITS[] = {2, 3, 4, 5, 6, 7};
-const size_t BIN_SIZES[] = {4, 8, 16, 32, 64, 128};
+const size_t BIN_BITS[] = { 3, 4, 5, 6, 7, 8, 9};
+const size_t BIN_SIZES[] = { 8, 16, 32, 64, 128, 256, 512};
 
 MallocState global_heap;
 // Allocate new bin for holding allocations of `size`
@@ -150,7 +150,7 @@ found_size:
   }
 
   // Ensure sure the first bin always has enough room for more allocations
-  if (bin->sz + 2 >= bin->cap) {
+  if (bin->sz + 1 == bin->cap) {
     BinHdr *nbin = allocate_bin(ms, BIN_SIZES[idx]);
     nbin->idx = idx;
     if (ms->bins[idx]) {
@@ -159,9 +159,10 @@ found_size:
       ms->bins[idx]->prev = nbin;
     }
     ms->bins[idx] = nbin;
+    bin = nbin;
   }
 
-  assert(bin->sz + 1 <= bin->cap);
+  assert(bin->sz + 1 < bin->cap);
 
   size_t i = bv_find_first_zero(bin->bitmap, bin->cap);
   bv_set(bin->bitmap, i);

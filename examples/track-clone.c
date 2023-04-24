@@ -13,7 +13,7 @@
 int child(void *arg) {
   uint64_t *counter = arg;
   *counter = 0;
-  for (uint64_t i = 0; i < 0x100000000; ++i)
+  for (uint64_t i = 0; i < 0x1000000000; ++i)
     *counter = i;
   write(1, "Goodbye!\n", 9);
 }
