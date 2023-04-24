@@ -15,16 +15,18 @@ void encrypt(uint8_t *data, uint8_t key, size_t size) {
 int main(int argc, char **argv) {
   pbvt_init();
 
-  size_t data_sz = 0x20;
-  uint8_t *data = pbvt_calloc(data_sz, sizeof(uint8_t));
-  for (int i = 0; i < data_sz; ++i)
-    data[i] = i;
+  srand(0);
 
-  for (int i = 0; i < 0x10000; ++i) {
-    encrypt(data, i, data_sz);
+  size_t data_sz = 0x1000;
+  uint8_t *data = pbvt_calloc(data_sz, sizeof(uint8_t));
+  for (int i = 0; i < 0x80000; ++i) {
+    for (int j = 0; j < data_sz; ++j)
+      data[j] = rand();
+
     pbvt_commit();
+    if (i % 0x1000 == 0)
+      pbvt_stats();
   }
-  pbvt_stats();
 
   return 0;
 }

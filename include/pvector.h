@@ -2,13 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// For 4-level paging (see "Paging" in Volume 3 of the Intel 64 and IA-32
-// Architectures Software Developer's manual)
-#define NUM_BITS (45+5)
-// #define BITS_PER_LEVEL (9)
-// #define BOTTOM_BITS (12)
-#define BITS_PER_LEVEL (5)
-#define BOTTOM_BITS (5)
+// For 4-level paging we need at least 48 bits of key (see "Paging" in Volume 3
+// of the Intel 64 and IA-32 Architectures Software Developer's manual)
+#define NUM_BITS (42+7)
+#define BITS_PER_LEVEL (3)
+#define BOTTOM_BITS (7)
 
 // Calculated defines, make sure (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL == 0
 #if (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL != 0
@@ -32,8 +30,8 @@ typedef struct PVector PVector;
 typedef struct PVector {
   uint64_t hash;
   uint64_t refcount;
-  uint64_t bitmap[(NUM_CHILDREN + (8 * sizeof(uint64_t)) - 1) /
-                  (8 * sizeof(uint64_t))];
+  uint16_t bitmap[(NUM_CHILDREN + (8 * sizeof(uint16_t)) - 1) /
+                  (8 * sizeof(uint16_t))];
   uint64_t *children;
 } PVector;
 

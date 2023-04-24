@@ -1,4 +1,3 @@
-#include <assert.h>
 #include <coz.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -6,6 +5,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "cassert.h"
 #include "pbvt.h"
 
 #define MIN(a, b) ((a) > (b) ? (b) : (a))
