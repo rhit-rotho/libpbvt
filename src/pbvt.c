@@ -22,7 +22,7 @@
 #include "pbvt.h"
 
 uint64_t get_child(PVector *n, int index);
-void set_bit(uint64_t *bitmap, int index);
+void set_bit(uint16_t *bitmap, int index);
 
 #define MIN(x, y) ((x) > (y) ? (y) : (x))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))

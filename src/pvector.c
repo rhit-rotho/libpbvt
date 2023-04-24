@@ -10,25 +10,25 @@
 
 HashTable *ht;
 
-int is_bit_set(uint64_t *bitmap, int index) {
-  int array_index = index / 64;
-  int bit_index = index % 64;
+int is_bit_set(uint16_t *bitmap, int index) {
+  int array_index = index / (sizeof(bitmap[0]) * 8);
+  int bit_index = index % (sizeof(bitmap[0]) * 8);
   return (bitmap[array_index] & (1ULL << bit_index)) != 0;
 }
 
-void set_bit(uint64_t *bitmap, int index) {
-  int array_index = index / 64;
-  int bit_index = index % 64;
+void set_bit(uint16_t *bitmap, int index) {
+  int array_index = index / (sizeof(bitmap[0]) * 8);
+  int bit_index = index % (sizeof(bitmap[0]) * 8);
   bitmap[array_index] |= (1ULL << bit_index);
 }
 
-void clear_bit(uint64_t *bitmap, int index) {
-  int array_index = index / 64;
-  int bit_index = index % 64;
+void clear_bit(uint16_t *bitmap, int index) {
+  int array_index = index / (sizeof(bitmap[0]) * 8);
+  int bit_index = index % (sizeof(bitmap[0]) * 8);
   bitmap[array_index] &= ~(1ULL << bit_index);
 }
 
-size_t count_set_bits(uint64_t *bitmap, size_t index) {
+inline size_t count_set_bits(uint16_t *bitmap, size_t index) {
   size_t count = 0;
   for (size_t i = 0; i <= index; i++)
     if (is_bit_set(bitmap, i))
@@ -38,9 +38,6 @@ size_t count_set_bits(uint64_t *bitmap, size_t index) {
 
 // Access a child using the sparse index
 uint64_t get_child(PVector *v, int index) {
-  // assert(v);
-  // return v->children[index];
-
   if (!is_bit_set(v->bitmap, index))
     return 0UL;
   int compact_index = count_set_bits(v->bitmap, index) - 1;
@@ -61,18 +58,16 @@ void set_child(PVector *v, int index, uint64_t value) {
                 sizeof(uint64_t));
     v->children[compact_index] = value;
     set_bit(v->bitmap, index);
-    // } else if (is_bit_set(v->bitmap, index) && value == 0) {
-    //   // A child is being removed, resize the children array and update the
-    //   bitmap int compact_index = count_set_bits(v->bitmap, index) - 1;
-    //   memmove(&v->children[compact_index], &v->children[compact_index + 1],
-    //           (count_set_bits(v->bitmap, NUM_CHILDREN - 1) - compact_index -
-    //           1) *
-    //               sizeof(uint64_t));
-    //   v->children = memory_realloc(
-    //       NULL, v->children,
-    //       (count_set_bits(v->bitmap, NUM_CHILDREN - 1) - 1) *
-    //       sizeof(uint64_t));
-    //   clear_bit(v->bitmap, index);
+  } else if (is_bit_set(v->bitmap, index) && value == 0) {
+    // A child is being removed, resize the children array and update the
+    int compact_index = count_set_bits(v->bitmap, index) - 1;
+    memmove(&v->children[compact_index], &v->children[compact_index + 1],
+            (count_set_bits(v->bitmap, NUM_CHILDREN - 1) - compact_index - 1) *
+                sizeof(uint64_t));
+    v->children = memory_realloc(
+        NULL, v->children,
+        (count_set_bits(v->bitmap, NUM_CHILDREN - 1) - 1) * sizeof(uint64_t));
+    clear_bit(v->bitmap, index);
   } else if (is_bit_set(v->bitmap, index)) {
     // Update the existing child
     int compact_index = count_set_bits(v->bitmap, index) - 1;

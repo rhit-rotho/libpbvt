@@ -1,6 +1,5 @@
 // cc examples/watchpoints.c -O2 -Iinclude -lpbvt -o watchpoints
 
-#include <assert.h>
 #include <sys/mman.h>
 
 #include "pbvt.h"
