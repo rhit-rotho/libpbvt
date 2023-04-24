@@ -1,6 +1,6 @@
-#include <assert.h>
 #include <string.h>
 
+#include "cassert.h"
 #include "memory.h"
 #include "queue.h"
 
