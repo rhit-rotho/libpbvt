@@ -21,6 +21,9 @@
 #include "memory.h"
 #include "pbvt.h"
 
+uint64_t get_child(PVector *n, int index);
+void set_bit(uint64_t *bitmap, int index);
+
 #define MIN(x, y) ((x) > (y) ? (y) : (x))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define CLAMP(x, a, b) MIN(MAX(x, a), b)
@@ -409,6 +412,8 @@ void pbvt_init(void) {
   PVector *v = memory_calloc(NULL, 1, sizeof(PVector));
   v->hash = 0UL;
   v->refcount = 1;
+  set_bit(v->bitmap, 0);
+  v->children = memory_calloc(NULL, 1, sizeof(uint64_t));
   Commit *h = pbvt_commit_create(v, NULL);
   pvs->head = h;
   ht_insert(pvs->states, h->hash, h);
@@ -648,7 +653,7 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
     // fprintf(f, "{<head>%.2lx (%ld refs)|{", v->hash & 0xff, v->refcount);
     fprintf(f, "{{");
     for (size_t i = 0; i < NUM_CHILDREN; ++i) {
-      if (v->children[i])
+      if (get_child(v, i))
         fprintf(f, "<%ld>", i);
       else
         fprintf(f, "<%ld>x", i);
@@ -684,9 +689,9 @@ void pbvt_print_node(FILE *f, HashTable *pr, PVector *v, int level) {
     return;
 
   for (size_t i = 0; i < NUM_CHILDREN; ++i) {
-    if (v->children[i]) {
-      fprintf(f, "\tv%.16lx:%ld -> v%.16lx:n;\n", v->hash, i, v->children[i]);
-      pbvt_print_node(f, pr, ht_get(ht, v->children[i]), level - 1);
+    if (get_child(v, i)) {
+      fprintf(f, "\tv%.16lx:%ld -> v%.16lx:n;\n", v->hash, i, get_child(v, i));
+      pbvt_print_node(f, pr, ht_get(ht, get_child(v, i)), level - 1);
     }
   }
 }
@@ -750,7 +755,7 @@ Commit *pbvt_last_changed(uint64_t idx, size_t n) {
   return c;
 }
 
-// O(mlog_d(n)) 
+// O(mlog_d(n))
 Commit *pbvt_last_changed_internal(uint64_t idx, size_t *depth) {
   Commit *head = pbvt_head();
 
@@ -767,19 +772,19 @@ Commit *pbvt_last_changed_internal(uint64_t idx, size_t *depth) {
     // O(log_d(n)) - n is the size of the trie
     for (int i = MAX_DEPTH - 1; i >= 1; --i) {
       key = (idxn >> (i - 1) * BITS_PER_LEVEL) & CHILD_MASK;
-      if (pv->children[key] == cv->children[key])
+      if (get_child(pv, key) == get_child(cv, key))
         goto skip;
-      if (cv->children[key] == 0UL) {
+      if (get_child(cv, key) == 0UL) {
         *depth = -1;
         return NULL;
       }
-      if (pv->children[key] == 0UL) {
+      if (get_child(pv, key) == 0UL) {
         *depth = -1;
         return NULL;
       }
 
-      pv = ht_get(ht, pv->children[key]); // O(1)
-      cv = ht_get(ht, cv->children[key]);
+      pv = ht_get(ht, get_child(pv, key)); // O(1)
+      cv = ht_get(ht, get_child(cv, key));
     }
     PVectorLeaf *pvl = (PVectorLeaf *)pv;
     PVectorLeaf *cvl = (PVectorLeaf *)cv;
