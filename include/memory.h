@@ -46,7 +46,7 @@ mucking around with any internal state in malloc.
 
 */
 
-#define NUM_BINS (7)
+#define NUM_BINS (6)
 
 // This can be tuned, must be power of 2 greater than pagesize
 #define BIN_SIZE (1 << 14)

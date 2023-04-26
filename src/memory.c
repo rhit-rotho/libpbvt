@@ -41,8 +41,8 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
   bin->prev = NULL;
 
 #ifdef MDEBUG
-  printf("// Allocating for %ld-byte, efficiency: %f%%\n", size,
-         100.0 * (float)(c * size) / sz);
+  printf("// Allocating %ld-byte bin for %ld-byte, efficiency: %f%%\n", sz,
+         size, 100.0 * (float)(c * size) / sz);
 #endif
 
   bin->sz = 0;
@@ -69,6 +69,9 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
   if (ms->on_mmap)
     ms->on_mmap(bin);
 
+#ifdef MDEBUG
+  printf("// Bin contents: %.16lx-%.16lx\n", bin->contents, bin + bin->memsz);
+#endif
   return bin;
 }
 
@@ -77,6 +80,9 @@ void *memory_calloc(MallocState *ms, size_t nmemb, size_t size) {
   if (!ms)
     ms = &global_heap;
 
+#ifdef MDEBUG
+  printf("calloc(%.16lx, %.16lx); // tot: %.16lx\n", nmemb, size, nmemb * size);
+#endif
   void *ptr = memory_malloc(ms, nmemb * size);
   assert(ptr != NULL);
   memset(ptr, 0, nmemb * size);
@@ -152,7 +158,7 @@ found_size:
   }
 
   // Ensure sure the first bin always has enough room for more allocations
-  if (bin->sz + 1 == bin->cap) {
+  if (bin->sz + 2 == bin->cap) {
     BinHdr *nbin = allocate_bin(ms, BIN_SIZES[idx]);
     nbin->idx = idx;
     if (ms->bins[idx]) {

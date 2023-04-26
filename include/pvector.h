@@ -4,9 +4,9 @@
 
 // For 4-level paging we need at least 48 bits of key (see "Paging" in Volume 3
 // of the Intel 64 and IA-32 Architectures Software Developer's manual)
-#define NUM_BITS (42+7)
+#define NUM_BITS (45+5)
 #define BITS_PER_LEVEL (3)
-#define BOTTOM_BITS (7)
+#define BOTTOM_BITS (5)
 
 // Calculated defines, make sure (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL == 0
 #if (NUM_BITS - BOTTOM_BITS) % BITS_PER_LEVEL != 0

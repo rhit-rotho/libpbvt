@@ -194,8 +194,7 @@ void pbvt_relocate_away_internal(Range *r) {
 
 void uffd_segv(int signo) {
   UNUSED(signo);
-  printf("WARNING: got segfault in uffd_montior\n");
-  abort();
+  assert(0 && "ERROR: got segfault in uffd_montior");
 }
 
 int uffd_monitor(void *args) {
@@ -262,14 +261,16 @@ skip_uffd:
       case UFFD_EVENT_PAGEFAULT:
         if (msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP) {
           Range *r = NULL;
+          void *addr = (void *)msg.arg.pagefault.address;
           for (size_t i = 0; i < queue_size(pvs->ranges); ++i) {
             r = queue_peekleft(pvs->ranges, i);
-            if (r->address == (void *)msg.arg.pagefault.address)
+            assert(r->address != NULL);
+            if (r->address <= addr && addr < r->address + r->len)
               break;
             r = NULL;
           }
 
-          assert(r);
+          assert(r != NULL && "ERROR: Couldn't find range for address");
 
           pbvt_relocate_away_internal(r);
           pbvt_write_protect_internal(uffd, r, 1);
@@ -590,7 +591,8 @@ void pbvt_print(char *path) {
 
   ht_free(heads);
 
-  // TODO: Add support for printing both branch information and program timeline
+  // TODO: Add support for printing both branch information and program
+  // timeline
   goto cleanup;
 
   fprintf(f, "\ttimeline [\n");
@@ -790,8 +792,8 @@ Commit *pbvt_last_changed_internal(uint64_t idx, size_t *depth) {
     PVectorLeaf *pvl = (PVectorLeaf *)pv;
     PVectorLeaf *cvl = (PVectorLeaf *)cv;
 
-    // TODO: Verify bottom bits at the desired positions (n bytes) have actually
-    // changed.
+    // TODO: Verify bottom bits at the desired positions (n bytes) have
+    // actually changed.
     if (pvl->bytes[idx & BOTTOM_MASK] != cvl->bytes[idx & BOTTOM_MASK])
       return p;
 

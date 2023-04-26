@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define INITIAL_CAPACITY (4);
+#define INITIAL_CAPACITY (0x10);
 
 typedef struct Queue {
   void **arr;
