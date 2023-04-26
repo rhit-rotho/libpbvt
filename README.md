@@ -27,4 +27,4 @@ Additionally, a persistent heap allocator is provided, which will provide smalle
 ## TODO
 
 - [ ] Windows support (see e.g., [emeryberger/Heap-Layers](https://github.com/emeryberger/Heap-Layers))
-- [ ] HAMT compaction for nodes (see [Introduction to HAMT](https://idea.popcount.org/2012-07-25-introduction-to-hamt/))
+- [x] HAMT compaction for nodes (see [Introduction to HAMT](https://idea.popcount.org/2012-07-25-introduction-to-hamt/))
