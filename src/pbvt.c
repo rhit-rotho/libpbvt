@@ -8,6 +8,7 @@
 #include <sched.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <string.h>
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
@@ -20,9 +21,6 @@
 #include "fasthash.h"
 #include "memory.h"
 #include "pbvt.h"
-
-uint64_t get_child(PVector *n, int index);
-void set_bit(uint16_t *bitmap, int index);
 
 #define MIN(x, y) ((x) > (y) ? (y) : (x))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
@@ -39,6 +37,7 @@ enum MSG_TYPE {
   MSG_WRITE_PROTECT,
   MSG_SHUTDOWN,
   MSG_SUCCESS,
+  MSG_LAST_CHANGED,
   MSG_COMMIT,
   MSG_HANDLE_FAULT,
   MSG_FAILURE,
@@ -77,18 +76,19 @@ typedef struct MonitorMessage {
   union {
     Commit *commit;
   } reply;
-  pthread_cond_t reply_cond;
-  pthread_mutex_t reply_mutex;
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+  bool replied;
 } MonitorMessage;
 
-void *clone_stk;
 int efd;
 MallocState *persistent_heap;
 PVectorState *pvs;
 
+pthread_t uffd_thread;
 void *alt_stk;
 
-#define MAX_QUEUE_SIZE (32)
+#define MAX_QUEUE_SIZE (64)
 
 struct MonitorMessage *queue[MAX_QUEUE_SIZE];
 pthread_mutex_t queue_mutex;
@@ -117,31 +117,32 @@ MonitorMessage *mon_dequeue(void) {
 
 void msg_wait(MonitorMessage *msg) {
   msg->status = MSG_NONE;
-  pthread_mutex_init(&msg->reply_mutex, NULL);
-  pthread_cond_init(&msg->reply_cond, NULL);
+  msg->replied = false;
+
+  pthread_mutex_init(&msg->mutex, NULL);
+  pthread_cond_init(&msg->cond, NULL);
 
   mon_enqueue(msg);
-
-  pthread_mutex_lock(&msg->reply_mutex);
 
   // Wake up monitor thread
   uint64_t c = 1;
   write(efd, &c, sizeof(c));
 
-  while (msg->status == MSG_NONE) {
-    pthread_cond_wait(&msg->reply_cond, &msg->reply_mutex);
-  }
-  pthread_mutex_unlock(&msg->reply_mutex);
+  pthread_mutex_lock(&msg->mutex);
+  while (!msg->replied)
+    pthread_cond_wait(&msg->cond, &msg->mutex);
+  pthread_mutex_unlock(&msg->mutex);
 
-  pthread_mutex_destroy(&msg->reply_mutex);
-  pthread_cond_destroy(&msg->reply_cond);
+  pthread_mutex_destroy(&msg->mutex);
+  pthread_cond_destroy(&msg->cond);
 }
 
 void msg_reply(MonitorMessage *msg, int status) {
-  pthread_mutex_lock(&msg->reply_mutex);
+  pthread_mutex_lock(&msg->mutex);
   msg->status = status;
-  pthread_mutex_unlock(&msg->reply_mutex);
-  pthread_cond_signal(&msg->reply_cond);
+  msg->replied = true;
+  pthread_mutex_unlock(&msg->mutex);
+  pthread_cond_signal(&msg->cond);
 }
 
 void segv_monitor(int signo, siginfo_t *si, void *ctx) {
@@ -287,6 +288,7 @@ skip_uffd:
         xperror("monitor read");
 
       MonitorMessage *msg = mon_dequeue();
+      assert(msg);
 
       switch (msg->type) {
       case MSG_REGISTER_RANGE: {
@@ -347,12 +349,17 @@ skip_uffd:
       case MSG_SHUTDOWN:
         msg_reply(msg, MSG_SUCCESS);
         goto cleanup;
+      case MSG_LAST_CHANGED:
+        uint64_t idx = (uint64_t)msg->data.range.range;
+        size_t n = msg->data.range.n;
+
+        msg->reply.commit = pbvt_last_changed_internal(idx, n);
+        msg_reply(msg, MSG_SUCCESS);
+        break;
       default:
         xperror("userfaultfd_monitor: unrecognized char");
         break;
       }
-
-      continue;
     }
   }
 
@@ -370,23 +377,15 @@ void pbvt_init(void) {
   // TODO: Replace with appropriate datastructure (hash table?)
   pvs->ranges = queue_create();
   pvs->branches = ht_create();
-  clone_stk = mmap(NULL, STACK_SIZE, PROT_READ | PROT_WRITE,
-                   MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-
-  if (clone_stk == MAP_FAILED)
-    xperror("mmap");
 
   efd = eventfd(0, EFD_SEMAPHORE);
   if (efd < 0)
     xperror("eventfd");
 
-  pthread_mutex_init(&queue_mutex, NULL);
-
   uffd_args args;
   args.pvs = pvs;
   args.infd = efd;
-  if (clone(uffd_monitor, clone_stk + STACK_SIZE, CLONE_VM, &args) == -1)
-    xperror("clone");
+  pthread_create(&uffd_thread, NULL, uffd_monitor, &args);
 
   alt_stk = mmap(NULL, STACK_SIZE, PROT_READ | PROT_WRITE,
                  MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
@@ -513,13 +512,14 @@ void pbvt_cleanup() {
   close(efd);
 
   // TODO: Make these client stubs for message passing to another thread
-  munmap(clone_stk, STACK_SIZE);
   printf("--- Persistent heap ---\n");
   print_malloc_stats(persistent_heap);
   printf("-----------------------\n");
   munmap(persistent_heap, HEAP_SIZE);
   memory_free(NULL, pvs);
   print_malloc_stats(NULL);
+
+  pthread_join(&uffd_thread, NULL);
 }
 
 void pbvt_gc_n(size_t n) {
@@ -741,14 +741,22 @@ void pbvt_stats() {
 
 uint64_t pbvt_capacity(void) { return MAX_INDEX; }
 
+Commit *pbvt_last_changed(uint64_t idx, size_t n) {
+  MonitorMessage msg = {.type = MSG_LAST_CHANGED,
+                        .data.range = {.range = (Range *)idx, .n = n}};
+  msg_wait(&msg);
+  assert(msg.status == MSG_SUCCESS);
+  return msg.reply.commit;
+}
+
 // TODO: Suboptimal, complexity is O(kmlog_d(n)), k number of bytes, n size of
 // trie, m number of commits
-Commit *pbvt_last_changed(uint64_t idx, size_t n) {
+Commit *pbvt_last_changed_internal(uint64_t idx, size_t n) {
   size_t tmpd = -1;
   size_t mindepth = -1;
   Commit *tmpc, *c = NULL;
   for (size_t i = 0; i < n; ++i) {
-    tmpc = pbvt_last_changed_internal(idx + i, &tmpd);
+    tmpc = pbvt_last_changed_internal_helper(idx + i, &tmpd);
     if (tmpd < mindepth) {
       mindepth = tmpd;
       c = tmpc;
@@ -759,7 +767,7 @@ Commit *pbvt_last_changed(uint64_t idx, size_t n) {
 }
 
 // O(mlog_d(n))
-Commit *pbvt_last_changed_internal(uint64_t idx, size_t *depth) {
+Commit *pbvt_last_changed_internal_helper(uint64_t idx, size_t *depth) {
   Commit *head = pbvt_head();
 
   *depth = 0;
@@ -792,9 +800,8 @@ Commit *pbvt_last_changed_internal(uint64_t idx, size_t *depth) {
     PVectorLeaf *pvl = (PVectorLeaf *)pv;
     PVectorLeaf *cvl = (PVectorLeaf *)cv;
 
-    // TODO: Verify bottom bits at the desired positions (n bytes) have
-    // actually changed.
-    if (pvl->bytes[idx & BOTTOM_MASK] != cvl->bytes[idx & BOTTOM_MASK])
+    if (UNTAG(pvl->bytes)[idx & BOTTOM_MASK] !=
+        UNTAG(cvl->bytes)[idx & BOTTOM_MASK])
       return p;
 
   skip:

@@ -36,7 +36,6 @@ typedef struct PVector {
 } PVector;
 
 typedef struct PVectorLeaf {
-  // uint64_t level;
   uint64_t hash;
   uint64_t refcount;
   uint8_t *bytes;
@@ -52,3 +51,11 @@ PVector *pvector_clone(PVector *v);
 void pvector_gc(PVector *v, uint64_t level);
 PVector *pvector_update_n(PVector *v, uint64_t idx, uint8_t *buf, size_t n);
 PVectorLeaf *pvector_get_leaf(PVector *v, uint64_t idx);
+uint64_t pvector_hash(PVector *v);
+
+int is_bit_set(uint16_t *bitmap, int index);
+void set_bit(uint16_t *bitmap, int index);
+void clear_bit(uint16_t *bitmap, int index);
+
+uint64_t get_child(PVector *n, int index);
+void set_child(PVector *v, int index, uint64_t value);

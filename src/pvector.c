@@ -183,7 +183,7 @@ PVector *pvector_update_n_helper(PVector *v, uint64_t depth, uint64_t idx,
     if (ht_get(ht, v->hash) == NULL) {
       ht_insert(ht, v->hash, v);
 
-      for (uint64_t m = 0; m < NUM_CHILDREN; ++m)
+      for (size_t m = 0; m < NUM_CHILDREN; ++m)
         ((PVector *)ht_get(ht, get_child(v, m)))->refcount++;
     }
   }
