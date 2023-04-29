@@ -7,6 +7,7 @@
 HashTable *ht_create(void) {
   HashTable *ht = mmap_malloc(sizeof(HashTable));
   ht->cap = HT_INITIAL_CAP;
+  ht->mask = ht->cap - 1;
   ht->size = 0;
   ht->buckets = mmap_calloc(ht->cap, sizeof(HashBucket));
 
@@ -17,7 +18,7 @@ HashTable *ht_create(void) {
 }
 
 void *ht_get(HashTable *ht, uint64_t key) {
-  HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
+  HashBucket *bucket = &ht->buckets[key & ht->mask];
   for (size_t i = 0; i < bucket->size; ++i)
     if (bucket->keys[i] == key)
       return bucket->values[i];
@@ -29,6 +30,7 @@ void ht_rekey(HashTable *ht) {
   HashTable *hn = &hnt;
   hn->size = 0;
   hn->cap = ht->cap * 2;
+  hn->mask = hn->cap - 1;
   hn->buckets = mmap_calloc(hn->cap, sizeof(HashBucket));
 
   for (size_t i = 0; i < hn->cap; ++i)
@@ -50,10 +52,10 @@ void ht_rekey(HashTable *ht) {
 int ht_insert(HashTable *ht, uint64_t key, void *val) {
   assert(!ht_get(ht, key));
 
-  HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
+  HashBucket *bucket = &ht->buckets[key & ht->mask];
   while (bucket->size + 1 >= HT_BUCKET_CAP) {
     ht_rekey(ht);
-    bucket = &ht->buckets[key & (ht->cap - 1)];
+    bucket = &ht->buckets[key & ht->mask];
   }
 
   bucket->keys[bucket->size] = key;
@@ -65,7 +67,7 @@ int ht_insert(HashTable *ht, uint64_t key, void *val) {
 }
 
 void *ht_remove(HashTable *ht, uint64_t key) {
-  HashBucket *bucket = &ht->buckets[key & (ht->cap - 1)];
+  HashBucket *bucket = &ht->buckets[key & ht->mask];
   for (size_t i = 0; i < bucket->size; ++i) {
     if (bucket->keys[i] == key) {
       void *val = bucket->values[i];

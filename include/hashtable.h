@@ -6,7 +6,7 @@
 // Basic implementation of hash table with bucketing
 
 #define HT_INITIAL_CAP (0x4000)
-#define HT_BUCKET_CAP (16)
+#define HT_BUCKET_CAP (32)
 
 typedef struct HashBucket {
   size_t size;
@@ -18,6 +18,7 @@ typedef struct HashTable {
   HashBucket *buckets;
   size_t cap; // power of 2, number of buckets
   size_t size;
+  size_t mask;
 } HashTable;
 
 // public operations
