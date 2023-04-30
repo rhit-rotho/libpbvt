@@ -198,7 +198,7 @@ void uffd_segv(int signo) {
   assert(0 && "ERROR: got segfault in uffd_montior");
 }
 
-int uffd_monitor(void *args) {
+void *uffd_monitor(void *args) {
   UNUSED(args);
   printf("uffd_monitor: %d\n", getpid());
 
@@ -349,13 +349,14 @@ skip_uffd:
       case MSG_SHUTDOWN:
         msg_reply(msg, MSG_SUCCESS);
         goto cleanup;
-      case MSG_LAST_CHANGED:
+      case MSG_LAST_CHANGED: {
         uint64_t idx = (uint64_t)msg->data.range.range;
         size_t n = msg->data.range.n;
 
         msg->reply.commit = pbvt_last_changed_internal(idx, n);
         msg_reply(msg, MSG_SUCCESS);
         break;
+      }
       default:
         xperror("userfaultfd_monitor: unrecognized char");
         break;
@@ -364,7 +365,7 @@ skip_uffd:
   }
 
 cleanup:
-  exit(EXIT_SUCCESS);
+  return NULL;
 }
 
 void persistent_heap_hook(BinHdr *bin) {
@@ -519,7 +520,7 @@ void pbvt_cleanup() {
   memory_free(NULL, pvs);
   print_malloc_stats(NULL);
 
-  pthread_join(&uffd_thread, NULL);
+  pthread_join(uffd_thread, NULL);
 }
 
 void pbvt_gc_n(size_t n) {
