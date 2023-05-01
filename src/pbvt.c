@@ -288,7 +288,6 @@ skip_uffd:
         xperror("monitor read");
 
       MonitorMessage *msg = mon_dequeue();
-      assert(msg);
 
       switch (msg->type) {
       case MSG_REGISTER_RANGE: {

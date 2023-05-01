@@ -8,6 +8,14 @@
 #include "fasthash.h"
 #include "memory.h"
 
+#define unlikely(x) __builtin_expect(x, 0)
+
+#define xperror(x)                                                             \
+  do {                                                                         \
+    perror(x);                                                                 \
+    exit(-1);                                                                  \
+  } while (0);
+
 // Make sure this matches NUM_BINS in memory.h
 // TODO: Add sizeof(PVector), sizeof(PVectorLeaf) as dedicated bin sizes
 const size_t BIN_BITS[] = {3, 4, 5, 7, 8, 9};
@@ -36,7 +44,7 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
   BinHdr *bin = mmap(NULL, sz, PROT_READ | PROT_WRITE,
                      MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   if (bin == MAP_FAILED)
-    perror("mmap");
+    xperror("mmap");
   bin->next = NULL;
   bin->prev = NULL;
 
@@ -56,7 +64,7 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
 
   ms->current_pages += sz / 0x1000;
 
-  if (ms->bt == NULL)
+  if (unlikely(ms->bt == NULL))
     ms->bt = ht_create();
 
   uint64_t key = (uintptr_t)bin;
@@ -93,15 +101,19 @@ void *memory_realloc(MallocState *ms, void *ptr, size_t size) {
   if (!ms)
     ms = &global_heap;
 
-  if (ms->bt == NULL)
+  if (unlikely(ms->bt == NULL))
     ms->bt = ht_create();
 
   uint64_t key = ((uintptr_t)ptr) & ~0xfff;
   BinHdr *bin = ht_get(ms->bt, fasthash64(&key, sizeof(key), 0));
   size_t idx = bin->idx;
 
-  assert(ptr < (void *)bin + bin->memsz);
   assert(bin && "No bin found!");
+  assert(ptr < (void *)bin + bin->memsz);
+
+  // No need to realloc
+  if (size <= BIN_SIZES[idx])
+    return ptr;
 
   void *dstptr = memory_malloc(ms, size);
   if (idx < NUM_BINS)
@@ -195,7 +207,7 @@ void memory_free(MallocState *ms, void *ptr) {
   printf("free(%p);\n", ptr);
 #endif
 
-  if (ms->bt == NULL)
+  if (unlikely(ms->bt == NULL))
     ms->bt = ht_create();
 
   BinHdr *bin;

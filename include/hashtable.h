@@ -5,8 +5,8 @@
 
 // Basic implementation of hash table with bucketing
 
-#define HT_INITIAL_CAP (0x4000)
-#define HT_BUCKET_CAP (32)
+#define HT_INITIAL_CAP (0x800)
+#define HT_BUCKET_CAP (0x10)
 
 typedef struct HashBucket {
   size_t size;
