@@ -1,3 +1,6 @@
+// cc examples/benchmark_malloc.c -O3 -DMINE -ggdb3 -lpbvt -o benchmark_malloc_mine
+// cc examples/benchmark_malloc.c -O3        -ggdb3 -lpbvt -o benchmark_malloc_glibc
+
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
