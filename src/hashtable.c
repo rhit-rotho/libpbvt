@@ -11,9 +11,6 @@ HashTable *ht_create(void) {
   ht->size = 0;
   ht->buckets = mmap_calloc(ht->cap, sizeof(HashBucket));
 
-  for (size_t i = 0; i < ht->cap; ++i)
-    ht->buckets[i].size = 0;
-
   return ht;
 }
 
@@ -32,9 +29,6 @@ void ht_rekey(HashTable *ht) {
   hn->cap = ht->cap * 2;
   hn->mask = hn->cap - 1;
   hn->buckets = mmap_calloc(hn->cap, sizeof(HashBucket));
-
-  for (size_t i = 0; i < hn->cap; ++i)
-    hn->buckets[i].size = 0;
 
   // reinsert
   for (size_t i = 0; i < ht->cap; ++i) {

@@ -49,7 +49,7 @@ mucking around with any internal state in malloc.
 #define NUM_BINS (6)
 
 // This can be tuned, must be power of 2 greater than pagesize
-#define BIN_SIZE (1 << 14)
+#define BIN_SIZE (0x1000 * 8)
 
 // For our bitvector, 8 bits per uint8_t
 #define BITS_PER_BLOCK (8 * sizeof(uint8_t))
@@ -60,14 +60,15 @@ typedef struct BinHdr BinHdr;
 // size is the current number of allocations
 // Bin is always a multiple of page size
 typedef struct BinHdr {
-  BinHdr *next;
-  BinHdr *prev;
-  size_t idx;
   size_t cap;
   size_t sz;
+  size_t idx;
   size_t memsz;
+  uint8_t *bitmap_start;
   uint8_t *bitmap;
   void *contents;
+  BinHdr *next;
+  BinHdr *prev;
   // bitmap
   // contents
 } BinHdr;

@@ -1,3 +1,4 @@
+#include <immintrin.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -7,6 +8,8 @@
 #include "cassert.h"
 #include "fasthash.h"
 #include "memory.h"
+
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
 
 #define unlikely(x) __builtin_expect(x, 0)
 
@@ -20,6 +23,15 @@
 // TODO: Add sizeof(PVector), sizeof(PVectorLeaf) as dedicated bin sizes
 const size_t BIN_BITS[] = {3, 4, 5, 7, 8, 9};
 const size_t BIN_SIZES[] = {8, 16, 32, 128, 256, 512};
+
+static inline uint64_t murmurhash64(uint64_t key) {
+  key ^= key >> 33;
+  key *= 0xff51afd7ed558ccdULL;
+  key ^= key >> 33;
+  key *= 0xc4ceb9fe1a85ec53ULL;
+  key ^= key >> 33;
+  return key;
+}
 
 MallocState global_heap;
 // Allocate new bin for holding allocations of `size`
@@ -59,6 +71,7 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
 
   // Adjust pointers into our bin
   bin->bitmap = (uint8_t *)bin + sizeof(BinHdr);
+  bin->bitmap_start = bin->bitmap;
   bin->contents =
       (void *)(((uintptr_t)bin->bitmap + ((bin->cap + 7) / 8) + 0x0f) & ~0xf);
 
@@ -69,7 +82,7 @@ BinHdr *allocate_bin(MallocState *ms, size_t size) {
 
   uint64_t key = (uintptr_t)bin;
   while (key < (uintptr_t)bin + bin->memsz) {
-    ht_insert(ms->bt, fasthash64(&key, sizeof(key), 0), bin);
+    ht_insert(ms->bt, murmurhash64(key), bin);
     key += 0x1000;
   }
 
@@ -105,7 +118,7 @@ void *memory_realloc(MallocState *ms, void *ptr, size_t size) {
     ms->bt = ht_create();
 
   uint64_t key = ((uintptr_t)ptr) & ~0xfff;
-  BinHdr *bin = ht_get(ms->bt, fasthash64(&key, sizeof(key), 0));
+  BinHdr *bin = ht_get(ms->bt, murmurhash64(key));
   size_t idx = bin->idx;
 
   assert(bin && "No bin found!");
@@ -184,8 +197,11 @@ found_size:
 
   assert(bin->sz + 1 < bin->cap);
 
-  size_t i = bv_find_first_zero(bin->bitmap, bin->cap);
+  size_t m = bv_find_first_zero(bin->bitmap_start, bin->cap);
+  size_t i = m + (bin->bitmap_start - bin->bitmap) * 8;
+  bin->bitmap_start += m / 8;
   bv_set(bin->bitmap, i);
+
   bin->sz += 1;
   void *ptr = bin->contents + i * BIN_SIZES[idx];
   ms->current_bytes += BIN_SIZES[idx];
@@ -214,7 +230,7 @@ void memory_free(MallocState *ms, void *ptr) {
   size_t idx;
 
   uint64_t key = ((uintptr_t)ptr) & ~0xfff;
-  bin = ht_get(ms->bt, fasthash64(&key, sizeof(key), 0));
+  bin = ht_get(ms->bt, murmurhash64(key));
   assert(bin && "WARNING: No bin found!");
   idx = bin->idx;
 
@@ -225,6 +241,9 @@ void memory_free(MallocState *ms, void *ptr) {
     size_t i = (ptr - bin->contents) >> BIN_BITS[idx];
     assert(bv_is_set(bin->bitmap, i));
     bv_unset(bin->bitmap, i);
+    // We don't have to reset to the beginning of the bitmap, could be
+    // MIN(bitmap_start-1, bitmap)
+    bin->bitmap_start = &bin->bitmap[i / 8];
     memset(ptr, 0x54, BIN_SIZES[idx]);
   }
 
@@ -249,7 +268,7 @@ void memory_free(MallocState *ms, void *ptr) {
 
     uint64_t key = (uintptr_t)bin;
     while (key < (uintptr_t)bin + bin->memsz) {
-      ht_remove(ms->bt, fasthash64(&key, sizeof(key), 0));
+      ht_remove(ms->bt, murmurhash64(key));
       key += 0x1000;
     }
 
@@ -314,10 +333,23 @@ int bv_is_set(uint8_t *bv, uint64_t key) {
 
 size_t bv_find_first_zero(uint8_t *bv, size_t cap) {
   size_t i = 0;
-  for (; i < (cap & ~7); i += 8)
-    if (*(uint64_t *)&bv[i] != UINT64_MAX)
-      break;
 
+  // The all ones vector
+  __m256i ones = _mm256_set1_epi8(UINT8_MAX);
+
+  for (; i < (cap & ~31); i += 32) {
+    __m256i vec = _mm256_loadu_si256((__m256i *)&bv[i]);
+    __m256i cmp = _mm256_cmpeq_epi8(vec, ones);
+    int mask = _mm256_movemask_epi8(cmp);
+    if (mask != 0xFFFFFFFF) { // Found a byte that's not all ones
+      // find the first byte
+      i += __builtin_ctz(
+          ~mask); // Use a bit scan operation to find the first zero bit
+      break;
+    }
+  }
+
+  // Process remaining bytes
   for (; i < cap; i += 1)
     if (bv[i] != UINT8_MAX)
       break;
